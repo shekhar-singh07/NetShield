@@ -1,0 +1,426 @@
+"""
+NetShield-ML — FastAPI Backend (Computer B)
+Main entry point. Wires together:
+  - TCP Server (for Computer A agent connections)
+  - Packet Capture (TShark)
+  - Flow Analyzer
+  - Metrics Collector
+  - Detection Engine
+  - SQLite Database
+  - REST API for the React dashboard
+
+Start with:
+    cd backend
+    python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+"""
+import time
+import socket
+import threading
+import logging
+import os
+import sys
+
+# Ensure backend directory is in sys.path regardless of working directory
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from config import (
+    SERVER_HOST, SERVER_PORT, CAPTURE_INTERFACE,
+    API_HOST, API_PORT, DATABASE_PATH,
+    DETECTION_PACKET_RATE_THRESHOLD,
+    DETECTION_PORT_SCAN_THRESHOLD,
+    DETECTION_CONNECTION_BURST_THRESHOLD,
+    get_local_hostname, get_local_ip,
+)
+from networking.server import NetShieldServer
+from monitoring.packet_capture import PacketCapture
+from monitoring.flow_analyzer import FlowAnalyzer
+from monitoring.metrics import MetricsCollector
+from detection.detector import DetectionEngine
+from database.database import init_db, store_event, get_events, get_event_counts, clear_events
+
+# ── Logging ──
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("netshield.main")
+
+# ── Initialize components ──
+init_db(DATABASE_PATH)
+
+flow_analyzer = FlowAnalyzer()
+metrics_collector = MetricsCollector(flow_analyzer)
+
+# Security event storage (in-memory recent + SQLite persistent)
+_recent_events = []
+_events_lock = threading.Lock()
+
+
+def on_security_event(event: dict):
+    """Callback when detection engine produces an event."""
+    with _events_lock:
+        _recent_events.insert(0, event)
+        if len(_recent_events) > 200:
+            _recent_events[:] = _recent_events[:200]
+    store_event(event)
+
+
+detection_engine = DetectionEngine(
+    packet_rate_threshold=DETECTION_PACKET_RATE_THRESHOLD,
+    port_scan_threshold=DETECTION_PORT_SCAN_THRESHOLD,
+    connection_burst_threshold=DETECTION_CONNECTION_BURST_THRESHOLD,
+    on_event=on_security_event,
+)
+
+
+def on_packet(packet: dict):
+    """Callback for each captured packet — feeds into flow analyzer + detector."""
+    flow_analyzer.process_packet(packet)
+    detection_engine.process_packet(packet)
+
+
+packet_capture = PacketCapture(interface=CAPTURE_INTERFACE, on_packet=on_packet)
+tcp_server = NetShieldServer(host=SERVER_HOST, port=SERVER_PORT)
+
+# Chart data recording thread
+_chart_thread_running = False
+
+
+def _chart_recorder():
+    """Record traffic chart data points every 2 seconds from real metrics."""
+    global _chart_thread_running
+    _chart_thread_running = True
+    while _chart_thread_running:
+        if metrics_collector.is_monitoring:
+            stats = flow_analyzer.get_stats()
+            bw = stats["bandwidth_mbps"]
+            # Simple RX/TX split approximation (real capture doesn't
+            # easily distinguish direction without interface info)
+            metrics_collector.record_chart_point(
+                rx_mbps=round(bw * 0.6, 2),
+                tx_mbps=round(bw * 0.4, 2),
+            )
+        time.sleep(2.0)
+
+
+# ── FastAPI App ──
+app = FastAPI(
+    title="NetShield-ML API",
+    description="Distributed Network Intrusion & Attack Detection System",
+    version="1.0.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # React dev server
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.on_event("startup")
+def startup():
+    """Start background services."""
+    tcp_server.start()
+    detection_engine.start()
+    # Start chart recording thread
+    t = threading.Thread(target=_chart_recorder, daemon=True)
+    t.start()
+    logger.info(f"NetShield backend started")
+    logger.info(f"  TCP Server: {SERVER_HOST}:{SERVER_PORT}")
+    logger.info(f"  Capture Interface: {CAPTURE_INTERFACE or '(not configured)'}")
+    logger.info(f"  TShark available: {packet_capture.available}")
+
+
+@app.on_event("shutdown")
+def shutdown():
+    """Stop background services."""
+    global _chart_thread_running
+    _chart_thread_running = False
+    packet_capture.stop()
+    tcp_server.stop()
+    detection_engine.stop()
+
+
+# ════════════════════════════════════════
+#  API ROUTES
+# ════════════════════════════════════════
+
+@app.get("/api/status")
+def get_status():
+    """System status overview."""
+    remote = tcp_server.get_remote_state()
+    # Remove internal tracking fields
+    remote_clean = {k: v for k, v in remote.items() if not k.startswith("_")}
+    detection_status = detection_engine.get_status()
+    counts = detection_engine.get_counts()
+
+    return {
+        "system": "NetShield-ML",
+        "version": "1.0.0",
+        "hostname": get_local_hostname(),
+        "ip": get_local_ip(),
+        "monitoring": metrics_collector.is_monitoring,
+        "uptime_seconds": round(metrics_collector.get_uptime(), 1),
+        "tcp_server": {
+            "host": SERVER_HOST,
+            "port": SERVER_PORT,
+            "running": tcp_server._running,
+        },
+        "remote_device": remote_clean,
+        "packet_capture": {
+            "available": packet_capture.available,
+            "running": packet_capture._running,
+            "interface": packet_capture.interface or None,
+            "reason": packet_capture.unavailable_reason if not packet_capture.available else None,
+        },
+        "detection": {
+            "mode": detection_status["mode"],
+            "running": detection_status["running"],
+            "ml_model_loaded": detection_status["ml_model_loaded"],
+            "ml_model_name": detection_status["ml_model_name"],
+            "rules": detection_status["rules"],
+        },
+        "counts": counts,
+    }
+
+
+@app.get("/api/metrics")
+def get_metrics():
+    """Network metrics from real packet capture."""
+    metrics = metrics_collector.get_metrics()
+    remote = tcp_server.get_remote_state()
+    metrics["latency_ms"] = remote.get("rtt_ms")
+    return metrics
+
+
+@app.get("/api/metrics/chart")
+def get_chart_data():
+    """Traffic chart data points."""
+    return {"data": metrics_collector.get_chart_data()}
+
+
+@app.get("/api/devices")
+def get_devices():
+    """Local and remote device information."""
+    remote = tcp_server.get_remote_state()
+    remote_clean = {k: v for k, v in remote.items() if not k.startswith("_")}
+
+    return {
+        "local": {
+            "hostname": get_local_hostname(),
+            "ip": get_local_ip(),
+            "status": "online",
+            "interface": packet_capture.interface or "(not configured)",
+        },
+        "remote": remote_clean,
+        "tcp_server": {
+            "host": SERVER_HOST,
+            "port": SERVER_PORT,
+            "running": tcp_server._running,
+        },
+    }
+
+
+@app.get("/api/events")
+def get_security_events(limit: int = 50):
+    """Security events from the detection engine."""
+    with _events_lock:
+        events = list(_recent_events[:limit])
+    return {
+        "events": events,
+        "total": len(_recent_events),
+        "detection_mode": detection_engine.get_status()["mode"],
+    }
+
+
+@app.get("/api/flows")
+def get_flows():
+    """Active network flows."""
+    flows = flow_analyzer.get_active_flows()
+    return {
+        "flows": flows[:50],  # limit response size
+        "total": len(flows),
+    }
+
+
+@app.get("/api/interfaces")
+def get_interfaces():
+    """Available network interfaces for packet capture."""
+    return {
+        "interfaces": packet_capture.get_interfaces(),
+        "current": packet_capture.interface or None,
+        "tshark_available": packet_capture.available,
+    }
+
+
+@app.post("/api/monitoring/start")
+def start_monitoring(interface: str = None):
+    """Start packet capture and monitoring."""
+    if not packet_capture.available:
+        return {
+            "success": False,
+            "error": "Packet capture unavailable",
+            "reason": packet_capture.unavailable_reason,
+        }
+
+    iface = interface or packet_capture.interface or CAPTURE_INTERFACE
+    if not iface:
+        return {
+            "success": False,
+            "error": "No capture interface specified",
+            "reason": "Set NETSHIELD_CAPTURE_INTERFACE environment variable or provide interface parameter.",
+        }
+
+    started = packet_capture.start(iface)
+    if started:
+        metrics_collector.start_monitoring()
+        return {"success": True, "interface": iface}
+    else:
+        return {
+            "success": False,
+            "error": "Failed to start capture",
+            "reason": packet_capture.unavailable_reason,
+        }
+
+
+@app.post("/api/monitoring/stop")
+def stop_monitoring():
+    """Stop packet capture and monitoring."""
+    packet_capture.stop()
+    metrics_collector.stop_monitoring()
+    return {"success": True}
+
+
+@app.post("/api/simulate/traffic")
+def simulate_traffic(scenario: str = "normal", count: int = 50, source_ip: str = "192.168.1.105"):
+    """
+    Controlled traffic generator endpoint for demonstration and verification.
+    Injects synthetic packet streams through the real FlowAnalyzer and DetectionEngine.
+    """
+    now = time.time()
+    generated = 0
+    metrics_collector.start_monitoring()
+
+    if scenario == "port_scan":
+        # Scan 25 unique destination ports to trigger PORT_SCAN_LIKE rule (> 15)
+        for port in range(20, 46):
+            pkt = {
+                "timestamp": now,
+                "source_ip": source_ip,
+                "destination_ip": get_local_ip(),
+                "source_port": 54321,
+                "destination_port": port,
+                "protocol": "TCP",
+                "length": 64,
+                "tcp_flags": "0x0002",
+                "protocols_str": "eth:ip:tcp",
+            }
+            on_packet(pkt)
+            generated += 1
+
+    elif scenario == "traffic_spike":
+        # Send 550 packets in a burst to trigger TRAFFIC_SPIKE rule (> 500 pkt/s)
+        for i in range(550):
+            pkt = {
+                "timestamp": now,
+                "source_ip": source_ip,
+                "destination_ip": get_local_ip(),
+                "source_port": 40000 + (i % 100),
+                "destination_port": 80,
+                "protocol": "TCP",
+                "length": 1420,
+                "tcp_flags": "0x0010",
+                "protocols_str": "eth:ip:tcp",
+            }
+            on_packet(pkt)
+            generated += 1
+
+    elif scenario == "connection_burst":
+        # Send 60 SYN packets rapidly to trigger CONNECTION_BURST rule (> 50 conn/s)
+        for i in range(60):
+            pkt = {
+                "timestamp": now,
+                "source_ip": source_ip,
+                "destination_ip": get_local_ip(),
+                "source_port": 30000 + i,
+                "destination_port": 443,
+                "protocol": "TCP",
+                "length": 64,
+                "tcp_flags": "0x0002",
+                "protocols_str": "eth:ip:tcp",
+            }
+            on_packet(pkt)
+            generated += 1
+
+    else:
+        # Normal mixed traffic (TCP, UDP, ICMP)
+        import random
+        for i in range(count):
+            proto = random.choice(["TCP", "UDP", "ICMP"])
+            dport = random.choice([80, 443, 53, 123])
+            pkt = {
+                "timestamp": now + (i * 0.05),
+                "source_ip": source_ip,
+                "destination_ip": get_local_ip(),
+                "source_port": 50000 + (i % 50),
+                "destination_port": dport,
+                "protocol": proto,
+                "length": random.randint(64, 1500),
+                "tcp_flags": "0x0018" if proto == "TCP" else "",
+                "protocols_str": f"eth:ip:{proto.lower()}",
+            }
+            on_packet(pkt)
+            generated += 1
+
+    # Force immediate detection analysis after synthetic injection
+    detection_engine.force_analysis()
+
+    with _events_lock:
+        current_events = list(_recent_events[:5])
+
+    return {
+        "success": True,
+        "scenario": scenario,
+        "packets_generated": generated,
+        "source_ip": source_ip,
+        "recent_events": current_events,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+
+
+@app.post("/api/events/clear")
+def clear_security_events():
+    """Clear all security events from memory and database."""
+    global _recent_events
+    with _events_lock:
+        _recent_events.clear()
+    clear_events()
+    return {"success": True, "message": "All security events cleared"}
+
+
+@app.get("/api/detection/model")
+def get_model_info():
+    """Get metadata about the loaded ML NIDS model."""
+    if detection_engine.ml_detector:
+        return detection_engine.ml_detector.get_info()
+    return {
+        "name": "None",
+        "loaded": False,
+        "accuracy": 0.0,
+        "classes": [],
+        "feature_names": [],
+        "feature_importances": {},
+        "estimators": 0,
+    }
+
+
+# ── Run directly ──
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host=API_HOST, port=API_PORT)
+
