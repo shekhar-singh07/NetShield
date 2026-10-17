@@ -1,7 +1,7 @@
 """
 NetShield-ML — TCP Server (Computer B)
-Accepts connections from remote NetShield agents, handles HELLO/ACK
-and heartbeat protocol over JSON messages.
+Accepts connections from remote NetShield agents, handles HELLO/ACK,
+heartbeat protocol, and bidirectional message/ACK testing over JSON messages.
 """
 import socket
 import threading
@@ -35,6 +35,7 @@ class NetShieldServer:
             "connected_since": None,
         }
         self._client_socket = None
+        self._pending_probes = {}  # req_id -> {"event": Event, "response": dict}
 
     def start(self):
         """Start the TCP server in a background thread."""
@@ -48,11 +49,7 @@ class NetShieldServer:
     def stop(self):
         """Stop the TCP server."""
         self._running = False
-        if self._client_socket:
-            try:
-                self._client_socket.close()
-            except Exception:
-                pass
+        self.disconnect_client()
         if self._server_socket:
             try:
                 self._server_socket.close()
@@ -71,10 +68,90 @@ class NetShieldServer:
             }
         logger.info("TCP Server stopped")
 
+    def disconnect_client(self):
+        """Gracefully disconnect the active client socket if one exists."""
+        with self._lock:
+            if self._client_socket:
+                try:
+                    self._client_socket.shutdown(socket.SHUT_RDWR)
+                except Exception:
+                    pass
+                try:
+                    self._client_socket.close()
+                except Exception:
+                    pass
+                self._client_socket = None
+            self.remote_device["status"] = "disconnected"
+            self.remote_device["hostname"] = None
+
     def get_remote_state(self) -> dict:
         """Return current remote device state (thread-safe)."""
         with self._lock:
             return dict(self.remote_device)
+
+    def send_test_message(self, message: str, timeout: float = 3.0) -> dict:
+        """
+        Send a test probe frame to the connected agent and await a real ACK.
+        Measures precise round-trip time (RTT) via monotonic clock.
+        """
+        with self._lock:
+            client = self._client_socket
+            if not client or self.remote_device.get("status") != "connected":
+                return {
+                    "success": False,
+                    "error": "No agent connected. Start Computer A client first.",
+                    "status": self.remote_device.get("status", "disconnected"),
+                }
+            probe_id = f"probe-{int(time.time() * 1000)}"
+            event = threading.Event()
+            self._pending_probes[probe_id] = {"event": event, "response": None}
+
+        t0 = time.monotonic()
+        payload = json.dumps({
+            "type": "probe",
+            "id": probe_id,
+            "content": message,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }) + "\n"
+
+        try:
+            client.sendall(payload.encode("utf-8"))
+        except Exception as e:
+            with self._lock:
+                self._pending_probes.pop(probe_id, None)
+            return {
+                "success": False,
+                "error": f"Socket transmission failed: {e}",
+            }
+
+        # Await real acknowledgment from agent
+        signaled = event.wait(timeout=timeout)
+        t1 = time.monotonic()
+        rtt_ms = round((t1 - t0) * 1000, 2)
+
+        with self._lock:
+            probe_entry = self._pending_probes.pop(probe_id, None)
+
+        if not signaled or not probe_entry or not probe_entry.get("response"):
+            return {
+                "success": False,
+                "error": f"Timed out waiting for ACK from agent (> {timeout}s).",
+                "rtt_ms": rtt_ms,
+                "message_id": probe_id,
+            }
+
+        ack = probe_entry["response"]
+        return {
+            "success": True,
+            "message_id": probe_id,
+            "sent_message": message,
+            "ack_content": ack.get("echo", message),
+            "ack_type": ack.get("type", "probe_ack"),
+            "rtt_ms": rtt_ms,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "recipient": self.remote_device.get("hostname") or self.remote_device.get("ip") or "Remote Agent",
+            "note": "Successful ACK confirms bidirectional TCP socket delivery, not intrusion detection status.",
+        }
 
     def _run(self):
         """Main server loop — accepts one client at a time."""
@@ -101,7 +178,7 @@ class NetShieldServer:
                 break
 
     def _handle_client(self, client: socket.socket, addr):
-        """Handle a connected client — process HELLO then heartbeats."""
+        """Handle a connected client — process HELLO, heartbeats, and probes."""
         client.settimeout(10.0)
         buffer = ""
 
@@ -115,11 +192,10 @@ class NetShieldServer:
                 try:
                     data = client.recv(4096)
                 except socket.timeout:
-                    # Check if we haven't heard for too long
                     if self.remote_device.get("last_heartbeat"):
                         elapsed = time.time() - self.remote_device["_last_hb_time"]
                         if elapsed > 30:
-                            logger.warning("Heartbeat timeout")
+                            logger.warning("Heartbeat timeout from client")
                             break
                     continue
 
@@ -128,7 +204,7 @@ class NetShieldServer:
 
                 buffer += data.decode("utf-8", errors="replace")
 
-                # Process each complete JSON message (newline-delimited)
+                # Process newline-delimited JSON messages
                 while "\n" in buffer:
                     line, buffer = buffer.split("\n", 1)
                     line = line.strip()
@@ -142,10 +218,16 @@ class NetShieldServer:
 
                     self._process_message(client, msg)
 
+        except (OSError, ConnectionResetError):
+            # Normal socket teardown or client disconnect
+            pass
         except Exception as e:
             logger.error(f"Client handler error: {e}")
         finally:
-            client.close()
+            try:
+                client.close()
+            except Exception:
+                pass
             self._client_socket = None
             with self._lock:
                 self.remote_device["status"] = "disconnected"
@@ -164,7 +246,6 @@ class NetShieldServer:
                 self.remote_device["connected_since"] = time.strftime("%Y-%m-%dT%H:%M:%S")
                 self.remote_device["last_message"] = "HELLO received"
                 self.remote_device["_last_hb_time"] = now
-            # Send ACK
             ack = json.dumps({
                 "type": "hello_ack",
                 "status": "connected",
@@ -182,7 +263,6 @@ class NetShieldServer:
                 self.remote_device["last_message"] = f"Heartbeat #{msg.get('sequence', '?')}"
                 self.remote_device["rtt_ms"] = rtt
                 self.remote_device["_last_hb_time"] = now
-            # Send heartbeat ACK
             ack = json.dumps({
                 "type": "heartbeat_ack",
                 "status": "connected",
@@ -190,6 +270,14 @@ class NetShieldServer:
                 "sequence": msg.get("sequence"),
             }) + "\n"
             client.sendall(ack.encode())
+
+        elif msg_type in ("probe_ack", "test_ack"):
+            probe_id = msg.get("id")
+            with self._lock:
+                if probe_id in self._pending_probes:
+                    self._pending_probes[probe_id]["response"] = msg
+                    self._pending_probes[probe_id]["event"].set()
+            logger.info(f"Received probe ACK for {probe_id}")
 
         else:
             logger.debug(f"Unknown message type: {msg_type}")

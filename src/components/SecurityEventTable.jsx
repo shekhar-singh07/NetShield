@@ -102,27 +102,27 @@ export default function SecurityEventTable({
   };
 
   return (
-    <div className="flex flex-col bg-surface-container-low border border-outline-variant rounded">
-      {/* ── Header ── */}
-      <div className="h-9 px-3 flex flex-wrap items-center justify-between border-b border-outline-variant bg-surface-container-lowest gap-2">
-        <div className="flex items-center gap-2">
-          <span className="material-symbols-outlined text-[16px] text-error">warning</span>
-          <span className="text-[13px] font-semibold text-on-surface leading-[18px]">{title}</span>
-          <span className="px-1.5 py-0.5 rounded bg-error-container/40 text-error font-mono text-[10px] font-semibold border border-error-container">
+    <div className="flex flex-col bg-surface-container-low border border-outline-variant rounded-lg shadow-xs overflow-hidden">
+      {/* ── Header & Action Bar ── */}
+      <div className="h-11 px-3.5 flex flex-wrap items-center justify-between border-b border-outline-variant bg-surface-container-lowest gap-2.5">
+        <div className="flex items-center gap-2.5">
+          <span className="material-symbols-outlined text-[18px] text-error">warning</span>
+          <span className="text-[13px] font-semibold text-on-surface uppercase tracking-wider font-mono">{title}</span>
+          <span className="px-2 py-0.5 rounded bg-error-container/40 text-error font-mono text-[11px] font-semibold border border-error-container">
             {events.filter(e => (e.severity || '').toLowerCase() === 'high').length} High / {events.length} Total
           </span>
         </div>
 
         {/* Action Controls */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2">
           {/* Search box */}
           <div className="relative">
             <input
               type="text"
-              placeholder="Search IP, alert..."
+              placeholder="Search IP, alert, reason..."
               value={searchQuery}
               onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
-              className="h-6 w-28 sm:w-36 pl-2 pr-1 rounded bg-surface-container border border-outline-variant text-[11px] font-mono text-on-surface focus:outline-none focus:border-primary"
+              className="h-7.5 w-36 sm:w-48 px-2.5 rounded-lg bg-surface-container border border-outline-variant text-[12px] font-mono text-on-surface focus:outline-none focus:border-primary"
             />
           </div>
 
@@ -130,7 +130,7 @@ export default function SecurityEventTable({
           <select
             value={filterSeverity}
             onChange={(e) => { setFilterSeverity(e.target.value); setCurrentPage(1); }}
-            className="h-6 px-1.5 rounded bg-surface-container border border-outline-variant text-on-surface-variant text-[11px] font-mono focus:outline-none"
+            className="h-7.5 px-2.5 rounded-lg bg-surface-container border border-outline-variant text-on-surface-variant text-[12px] font-mono focus:outline-none focus:border-primary"
           >
             <option value="all">All Severities</option>
             <option value="high">High Only</option>
@@ -141,10 +141,10 @@ export default function SecurityEventTable({
           {/* Export CSV */}
           <button
             onClick={handleExportCSV}
-            className="h-6 px-2 rounded bg-surface-container border border-outline-variant text-outline hover:text-on-surface active:scale-95 text-[11px] font-mono flex items-center gap-1 transition-all"
+            className="h-7.5 px-2.5 rounded-lg bg-surface-container border border-outline-variant text-outline hover:text-on-surface active:scale-95 text-[12px] font-mono flex items-center gap-1.5 transition-all"
             title="Export CSV"
           >
-            <span className="material-symbols-outlined text-[13px]">file_download</span>
+            <span className="material-symbols-outlined text-[15px]">file_download</span>
             <span className="hidden sm:inline">Export</span>
           </button>
 
@@ -152,10 +152,10 @@ export default function SecurityEventTable({
           {events.length > 0 && (
             <button
               onClick={handleClear}
-              className="h-6 px-1.5 rounded bg-surface-container border border-outline-variant text-outline hover:text-error active:scale-95 text-[11px] font-mono flex items-center transition-all"
+              className="h-7.5 px-2 rounded-lg bg-surface-container border border-outline-variant text-outline hover:text-error active:scale-95 text-[12px] font-mono flex items-center transition-all"
               title="Clear event history"
             >
-              <span className="material-symbols-outlined text-[14px]">delete</span>
+              <span className="material-symbols-outlined text-[16px]">delete</span>
             </button>
           )}
 
@@ -163,10 +163,10 @@ export default function SecurityEventTable({
           {onRefresh && (
             <button
               onClick={onRefresh}
-              className="h-6 w-6 flex items-center justify-center text-outline hover:text-on-surface active:scale-90 transition-all"
+              className="h-7.5 w-7.5 rounded-lg bg-surface-container border border-outline-variant flex items-center justify-center text-outline hover:text-on-surface active:scale-90 transition-all"
               title="Refresh alerts"
             >
-              <span className="material-symbols-outlined text-[14px]">refresh</span>
+              <span className="material-symbols-outlined text-[16px]">refresh</span>
             </button>
           )}
         </div>

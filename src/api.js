@@ -64,6 +64,20 @@ export const clearEvents = () => postJSON('/api/events/clear');
 /** GET /api/detection/model — metadata & feature importances of ML model */
 export const fetchModelInfo = () => fetchJSON('/api/detection/model');
 
+/** POST /api/devices/agent/connect — connect local test agent */
+export const connectAgent = () => postJSON('/api/devices/agent/connect');
+
+/** POST /api/devices/agent/disconnect — disconnect agent */
+export const disconnectAgent = () => postJSON('/api/devices/agent/disconnect');
+
+/** POST /api/devices/agent/message — send test message and get real ACK & RTT */
+export const sendAgentMessage = (message = 'NETSHIELD_PROBE') =>
+  postJSON('/api/devices/agent/message', { message });
+
+/** POST /api/simulate/custom — Custom Traffic Lab (detection_test or network_test) */
+export const simulateCustomTraffic = (params) =>
+  postJSON('/api/simulate/custom', params);
+
 /**
  * Check if backend is reachable.
  * Returns { connected: true, data } or { connected: false }.

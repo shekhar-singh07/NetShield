@@ -1,8 +1,10 @@
 /**
- * MonitoringPage — Live network monitoring & capture console.
- * Shows real packet metrics, traffic chart, attack simulator, and active network flows.
+ * MonitoringPage — Live Network Traffic & Packet Capture Console
+ * Ownership: Packet-capture controls, live traffic visualization, traffic metrics, and active network flows.
+ * Attack simulation studio is relocated to /security per UI/UX ownership guidelines.
  */
 import { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import {
   fetchStatus,
   fetchMetrics,
@@ -13,8 +15,10 @@ import {
   stopMonitoring,
 } from '../api';
 import TrafficChart from '../components/TrafficChart';
-import SimulationPanel from '../components/SimulationPanel';
+import ProtocolDistribution from '../components/ProtocolDistribution';
 import { DisconnectedBanner } from './OverviewPage';
+
+const FLOW_PAGE_SIZE = 10;
 
 export default function MonitoringPage({ backendConnected }) {
   const [status, setStatus] = useState(null);
@@ -24,9 +28,9 @@ export default function MonitoringPage({ backendConnected }) {
   const [interfaces, setInterfaces] = useState([]);
   const [selectedIface, setSelectedIface] = useState('');
   const [actionMsg, setActionMsg] = useState('');
+  const [actionLoading, setActionLoading] = useState(false);
   const [flowSearch, setFlowSearch] = useState('');
   const [flowPage, setFlowPage] = useState(1);
-  const FLOW_PAGE_SIZE = 8;
 
   const refreshData = useCallback(async () => {
     try {
@@ -38,9 +42,11 @@ export default function MonitoringPage({ backendConnected }) {
       ]);
       setStatus(s);
       setMetrics(m);
-      setChartData(c.data || []);
-      setFlows(f.flows || []);
-    } catch {}
+      setChartData(c?.data || []);
+      setFlows(f?.flows || []);
+    } catch {
+      // Silently catch errors
+    }
   }, []);
 
   useEffect(() => {
@@ -58,17 +64,19 @@ export default function MonitoringPage({ backendConnected }) {
         if (!active) return;
         setStatus(s);
         setMetrics(m);
-        setChartData(c.data || []);
-        setFlows(f.flows || []);
-      } catch {}
+        setChartData(c?.data || []);
+        setFlows(f?.flows || []);
+      } catch {
+        // Polling failover
+      }
     };
 
     poll();
     fetchInterfaces()
       .then((r) => {
         if (active) {
-          setInterfaces(r.interfaces || []);
-          if (r.current) setSelectedIface(r.current);
+          setInterfaces(r?.interfaces || []);
+          if (r?.current) setSelectedIface(r.current);
         }
       })
       .catch(() => {});
@@ -86,24 +94,34 @@ export default function MonitoringPage({ backendConnected }) {
   const protocols = metrics?.protocols || {};
 
   const handleStart = async () => {
+    setActionLoading(true);
+    setActionMsg('');
     try {
       const result = await startMonitoring(selectedIface || undefined);
       if (result.success) {
         setActionMsg(`Monitoring started on ${result.interface}`);
+        refreshData();
       } else {
-        setActionMsg(`Failed: ${result.reason || result.error}`);
+        setActionMsg(`Failed to start: ${result.reason || result.error}`);
       }
     } catch (e) {
       setActionMsg(`Error: ${e.message}`);
+    } finally {
+      setActionLoading(false);
     }
   };
 
   const handleStop = async () => {
+    setActionLoading(true);
+    setActionMsg('');
     try {
       await stopMonitoring();
-      setActionMsg('Monitoring stopped');
+      setActionMsg('Packet capture stopped');
+      refreshData();
     } catch (e) {
       setActionMsg(`Error: ${e.message}`);
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -131,61 +149,68 @@ export default function MonitoringPage({ backendConnected }) {
   );
 
   return (
-    <div className="flex flex-col gap-3">
-      {/* Controls Bar */}
-      <div className="bg-surface-container-low border border-outline-variant rounded p-3 flex flex-wrap items-center justify-between gap-3 shadow-sm">
-        {/* Start / Stop */}
-        <div className="flex items-center gap-2">
+    <div className="flex flex-col gap-4">
+      {/* ── Packet Capture Controls Bar ── */}
+      <div className="bg-surface-container-low border border-outline-variant rounded-lg p-3.5 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+        {/* Actions & Capture State */}
+        <div className="flex flex-wrap items-center gap-3">
           <button
             onClick={handleStart}
-            disabled={isMonitoring || !captureAvail}
-            className="h-8 px-3 rounded bg-emerald-500/20 border border-emerald-500/40 hover:bg-emerald-500/30 text-emerald-300 font-mono text-[12px] font-semibold transition-all flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+            disabled={isMonitoring || !captureAvail || actionLoading}
+            className="h-9 px-4 rounded-lg bg-emerald-500/20 border border-emerald-500/40 hover:bg-emerald-500/30 text-emerald-300 font-mono text-[13px] font-semibold transition-all flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed shadow-xs"
           >
-            <span className="material-symbols-outlined text-[16px]">play_arrow</span>
-            Start Live Sniffer
-          </button>
-          <button
-            onClick={handleStop}
-            disabled={!isMonitoring}
-            className="h-8 px-3 rounded bg-surface-container border border-outline-variant hover:bg-surface-container-high text-on-surface font-mono text-[12px] font-medium transition-all flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <span className="material-symbols-outlined text-[16px]">stop</span>
-            Stop
+            <span className="material-symbols-outlined text-[18px]">play_arrow</span>
+            <span>{actionLoading ? 'Starting...' : 'Start Live Sniffer'}</span>
           </button>
 
-          {/* Status Badge */}
+          <button
+            onClick={handleStop}
+            disabled={!isMonitoring || actionLoading}
+            className="h-9 px-4 rounded-lg bg-surface-container border border-outline-variant hover:bg-surface-container-high text-on-surface font-mono text-[13px] font-medium transition-all flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <span className="material-symbols-outlined text-[18px]">stop</span>
+            <span>Stop Capture</span>
+          </button>
+
+          {/* Explicit Engine Status Indicator */}
           <div
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded border font-mono text-[11px] font-semibold ${
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border font-mono text-[12px] font-semibold ${
               isMonitoring
-                ? 'bg-surface-container-high border-emerald-500/30 text-emerald-300'
-                : 'bg-surface-container-high border-outline-variant text-outline'
+                ? 'bg-surface-container-high border-emerald-500/40 text-emerald-300'
+                : 'bg-surface-container border-outline-variant text-outline'
             }`}
           >
-            <div className="relative flex items-center justify-center w-2 h-2">
+            <div className="relative flex items-center justify-center w-2.5 h-2.5">
               {isMonitoring && (
-                <span className="beacon-ring absolute inline-flex h-3 w-3 rounded-full bg-emerald-400 opacity-60" />
+                <span className="beacon-ring absolute inline-flex h-3.5 w-3.5 rounded-full bg-emerald-400 opacity-60" />
               )}
               <span
-                className={`relative inline-flex rounded-full h-1.5 w-1.5 ${
+                className={`relative inline-flex rounded-full h-2 w-2 ${
                   isMonitoring ? 'bg-emerald-400' : 'bg-outline'
                 }`}
               />
             </div>
-            {isMonitoring ? 'INSPECTION ACTIVE' : 'ENGINE STANDBY'}
+            <span>
+              {isMonitoring
+                ? 'INSPECTION ACTIVELY RUNNING'
+                : captureAvail
+                ? 'CAPTURE ENGINE READY'
+                : 'SYNTHETIC TESTBED MODE'}
+            </span>
           </div>
         </div>
 
-        {/* Interface & Status */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5">
-            <span className="font-mono text-[11px] text-outline">Interface:</span>
+        {/* Interface & Feedback */}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[12px] text-outline">Interface:</span>
             {interfaces.length > 0 ? (
               <select
                 value={selectedIface}
                 onChange={(e) => setSelectedIface(e.target.value)}
-                className="h-7 px-2 rounded bg-surface-container-lowest border border-outline-variant font-mono text-[11px] text-on-surface focus:outline-none focus:border-primary"
+                className="h-8 px-2.5 rounded bg-surface-container-lowest border border-outline-variant font-mono text-[12px] text-on-surface focus:outline-none focus:border-primary"
               >
-                <option value="">Select Interface...</option>
+                <option value="">Auto-Detect Interface</option>
                 {interfaces.map((iface, i) => (
                   <option key={i} value={iface.split('.')[0]?.trim() || iface}>
                     {iface}
@@ -193,138 +218,183 @@ export default function MonitoringPage({ backendConnected }) {
                 ))}
               </select>
             ) : (
-              <span className="font-mono text-[11px] text-on-surface-variant bg-surface-container px-2 py-0.5 rounded border border-outline-variant">
+              <span className="font-mono text-[12px] text-on-surface-variant bg-surface-container px-2.5 py-1 rounded border border-outline-variant">
                 {captureIface}
               </span>
             )}
           </div>
 
           {actionMsg && (
-            <span className="font-mono text-[11px] text-secondary font-medium">
+            <span className="font-mono text-[12px] text-secondary font-medium bg-surface-container px-2.5 py-1 rounded border border-secondary/30">
               {actionMsg}
             </span>
           )}
         </div>
       </div>
 
-      {/* Capture Fallback Notice if TShark not available */}
+      {/* ── Guidance Banner: TShark Unavailable Notice (if applicable) ── */}
       {!captureAvail && (
-        <div className="bg-surface-container-low border border-outline-variant rounded p-3 flex items-start justify-between gap-3">
-          <div className="flex items-start gap-2.5">
-            <span className="material-symbols-outlined text-primary text-[22px] mt-0.5">info</span>
+        <div className="bg-surface-container-low border border-tertiary-container/40 rounded-lg p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-start gap-3">
+            <span className="material-symbols-outlined text-tertiary text-[22px] mt-0.5">info</span>
             <div>
-              <p className="text-on-surface font-semibold text-[13px] font-mono">
-                PACKET INJECTION &amp; HYBRID TESTBED MODE
-              </p>
-              <p className="text-on-surface-variant text-[12px] mt-0.5">
-                Local TShark is not installed on this host. NetShield is operating with the integrated synthetic traffic generator and socket listener (Port 5000). Use the simulator below to generate live traffic and test intrusion detection.
+              <div className="text-[13px] font-semibold text-on-surface flex items-center gap-2">
+                <span>Packet Capture Unavailable on Host</span>
+                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-tertiary-container/30 text-tertiary-fixed-dim border border-tertiary-container/40">
+                  TSHARK NOT INSTALLED
+                </span>
+              </div>
+              <p className="text-[12px] text-on-surface-variant mt-0.5 leading-relaxed">
+                TShark binary was not found in PATH. Live network packet sniffing is paused, but socket listening on port 5000 and simulation tests remain active.
               </p>
             </div>
           </div>
+          <Link
+            to="/security"
+            className="shrink-0 px-3 py-1.5 rounded bg-surface-container border border-outline-variant hover:bg-surface-container-high text-primary font-mono text-[12px] font-medium transition-colors flex items-center gap-1"
+          >
+            <span>Run Simulation Test</span>
+            <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+          </Link>
         </div>
       )}
 
-      {/* Attack Simulation Studio */}
-      <SimulationPanel onSimulationComplete={refreshData} />
-
-      {/* Metrics Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2">
-        <MCard label="PACKETS" value={metrics?.packets ?? 0} />
-        <MCard label="PACKETS/SEC" value={metrics?.packets_per_second ?? 0} />
-        <MCard label="ACTIVE FLOWS" value={metrics?.flows ?? 0} />
-        <MCard label="BANDWIDTH" value={`${metrics?.bandwidth_mbps ?? 0} Mbps`} />
-        <MCard label="LATENCY RTT" value={metrics?.latency_ms != null ? `${metrics.latency_ms} ms` : '—'} />
-        <MCard label="TCP FLOWS" value={`${protocols.tcp ?? 0}%`} />
-        <MCard label="UDP FLOWS" value={`${protocols.udp ?? 0}%`} />
-        <MCard label="ICMP FLOWS" value={`${protocols.icmp ?? 0}%`} />
+      {/* ── Guidance Banner: Attack Simulation Notice ── */}
+      <div className="bg-surface-container-lowest border border-outline-variant/70 rounded-lg p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-[13px]">
+        <div className="flex items-center gap-2.5 text-on-surface-variant">
+          <span className="material-symbols-outlined text-primary text-[18px]">psychology</span>
+          <span>
+            Looking to inject test traffic, simulate port scans, or test intrusion detection?
+          </span>
+        </div>
+        <Link
+          to="/security"
+          className="text-primary hover:text-secondary font-mono text-[12px] font-medium flex items-center gap-1 transition-colors shrink-0"
+        >
+          <span>Open Attack Simulation Studio</span>
+          <span className="material-symbols-outlined text-[15px]">arrow_forward</span>
+        </Link>
       </div>
 
-      {/* Traffic Chart */}
-      <div className="bg-surface-container-low border border-outline-variant rounded overflow-hidden shadow-sm">
-        <TrafficChart data={chartData} isMonitoring={isMonitoring} />
+      {/* ── Key Network Metrics Bar (Focused, High-Value) ── */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <MCard
+          label="Total Packets"
+          value={metrics?.packets ?? 0}
+          sub={metrics?.packets_per_second != null ? `${metrics.packets_per_second} pkts/sec` : null}
+        />
+        <MCard
+          label="Active Flows"
+          value={metrics?.flows ?? 0}
+          sub="Tracked 5-tuples"
+        />
+        <MCard
+          label="Throughput"
+          value={metrics?.bandwidth_mbps != null ? `${metrics.bandwidth_mbps} Mbps` : '0 Mbps'}
+          sub="Live interface rate"
+        />
+        <MCard
+          label="Round-Trip RTT"
+          value={metrics?.latency_ms != null ? `${metrics.latency_ms} ms` : '—'}
+          sub="Agent heartbeat delay"
+        />
       </div>
 
-      {/* Live Active Flows Table */}
-      <div className="bg-surface-container-low border border-outline-variant rounded shadow-sm">
-        <div className="h-9 px-3 flex flex-wrap items-center justify-between border-b border-outline-variant bg-surface-container-lowest gap-2">
+      {/* ── Live Traffic Visualization (TrafficChart + ProtocolDistribution) ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+        <div className="lg:col-span-8 bg-surface-container-low border border-outline-variant rounded-lg overflow-hidden shadow-xs">
+          <TrafficChart data={chartData} isMonitoring={isMonitoring} />
+        </div>
+        <div className="lg:col-span-4">
+          <ProtocolDistribution protocols={protocols} />
+        </div>
+      </div>
+
+      {/* ── Active Network Flows Table ── */}
+      <div className="bg-surface-container-low border border-outline-variant rounded-lg shadow-xs overflow-hidden">
+        {/* Table Toolbar */}
+        <div className="h-10 px-3.5 flex flex-wrap items-center justify-between border-b border-outline-variant bg-surface-container-lowest gap-2">
           <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-[16px] text-secondary">alt_route</span>
-            <span className="text-[13px] font-semibold text-on-surface">
+            <span className="material-symbols-outlined text-[18px] text-secondary">alt_route</span>
+            <span className="text-[13px] font-semibold text-on-surface uppercase tracking-wider font-mono">
               Active Network Flows ({flows.length})
             </span>
-            <span className="px-1.5 py-0.2 rounded bg-surface-container text-outline font-mono text-[10px]">
-              5-Tuple Flow State
+            <span className="px-2 py-0.5 rounded bg-surface-container text-outline font-mono text-[11px] border border-outline-variant">
+              5-Tuple Flow Inspection
             </span>
           </div>
 
           <div className="flex items-center gap-2">
             <input
               type="text"
-              placeholder="Search flows..."
+              placeholder="Search IP, port, proto..."
               value={flowSearch}
               onChange={(e) => {
                 setFlowSearch(e.target.value);
                 setFlowPage(1);
               }}
-              className="h-6 w-32 sm:w-44 px-2 rounded bg-surface-container border border-outline-variant text-[11px] font-mono text-on-surface focus:outline-none focus:border-primary"
+              className="h-7 w-36 sm:w-48 px-2.5 rounded bg-surface-container border border-outline-variant text-[12px] font-mono text-on-surface focus:outline-none focus:border-primary"
             />
             <button
               onClick={refreshData}
-              className="h-6 w-6 flex items-center justify-center text-outline hover:text-on-surface active:scale-90 transition-all"
+              className="h-7 w-7 flex items-center justify-center text-outline hover:text-on-surface active:scale-90 transition-all rounded hover:bg-surface-container"
               title="Refresh flow table"
             >
-              <span className="material-symbols-outlined text-[14px]">refresh</span>
+              <span className="material-symbols-outlined text-[16px]">refresh</span>
             </button>
           </div>
         </div>
 
+        {/* Table Content */}
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left">
             <thead>
-              <tr className="h-7 bg-surface-container border-b border-outline-variant text-outline font-mono text-[10px] uppercase tracking-wider">
-                <th className="px-3 font-medium w-16">Proto</th>
-                <th className="px-3 font-medium">Source Endpoint</th>
+              <tr className="h-8 bg-surface-container border-b border-outline-variant text-outline font-mono text-[11px] uppercase tracking-wider">
+                <th className="px-3.5 font-medium w-20">Protocol</th>
+                <th className="px-3.5 font-medium">Source Endpoint</th>
                 <th className="px-2 font-medium text-center w-6"></th>
-                <th className="px-3 font-medium">Destination Endpoint</th>
-                <th className="px-3 font-medium text-right">Packets</th>
-                <th className="px-3 font-medium text-right">Total Bytes</th>
-                <th className="px-3 font-medium text-right">Throughput</th>
-                <th className="px-3 font-medium text-right">Duration</th>
+                <th className="px-3.5 font-medium">Destination Endpoint</th>
+                <th className="px-3.5 font-medium text-right">Packets</th>
+                <th className="px-3.5 font-medium text-right">Total Bytes</th>
+                <th className="px-3.5 font-medium text-right">Rate</th>
+                <th className="px-3.5 font-medium text-right">Duration</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-outline-variant/60 font-mono text-[11px]">
+            <tbody className="divide-y divide-outline-variant/60 font-mono text-[12px]">
               {pagedFlows.map((fl, i) => (
-                <tr key={i} className="h-7 hover:bg-surface-container-high/60 transition-colors">
-                  <td className="px-3">
-                    <span className={`px-1 py-0.2 rounded text-[9px] font-semibold border ${
-                      fl.protocol === 'TCP'
-                        ? 'bg-primary/15 text-primary border-primary/30'
-                        : fl.protocol === 'UDP'
-                        ? 'bg-secondary/15 text-secondary border-secondary/30'
-                        : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
-                    }`}>
+                <tr key={i} className="h-8 hover:bg-surface-container-high/60 transition-colors">
+                  <td className="px-3.5">
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${
+                        fl.protocol === 'TCP'
+                          ? 'bg-primary/15 text-primary border-primary/30'
+                          : fl.protocol === 'UDP'
+                          ? 'bg-secondary/15 text-secondary border-secondary/30'
+                          : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                      }`}
+                    >
                       {fl.protocol}
                     </span>
                   </td>
-                  <td className="px-3 text-on-surface font-medium">
+                  <td className="px-3.5 text-on-surface font-medium">
                     {fl.source_ip}:{fl.source_port ?? '—'}
                   </td>
                   <td className="px-2 text-center text-outline">
-                    <span className="material-symbols-outlined text-[13px]">arrow_forward</span>
+                    <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
                   </td>
-                  <td className="px-3 text-on-surface">
+                  <td className="px-3.5 text-on-surface">
                     {fl.destination_ip}:{fl.destination_port ?? '—'}
                   </td>
-                  <td className="px-3 text-right text-on-surface-variant font-medium">
+                  <td className="px-3.5 text-right text-on-surface-variant font-medium">
                     {fl.packet_count?.toLocaleString()}
                   </td>
-                  <td className="px-3 text-right text-on-surface-variant">
+                  <td className="px-3.5 text-right text-on-surface-variant">
                     {formatBytes(fl.byte_count)}
                   </td>
-                  <td className="px-3 text-right text-secondary font-medium">
+                  <td className="px-3.5 text-right text-secondary font-medium">
                     {fl.packets_per_sec != null ? `${fl.packets_per_sec} pkt/s` : '—'}
                   </td>
-                  <td className="px-3 text-right text-outline">
+                  <td className="px-3.5 text-right text-outline">
                     {fl.duration != null ? `${fl.duration.toFixed(1)}s` : '—'}
                   </td>
                 </tr>
@@ -332,10 +402,20 @@ export default function MonitoringPage({ backendConnected }) {
 
               {pagedFlows.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-3 py-6 text-center text-outline font-mono text-[11px]">
-                    {flows.length === 0
-                      ? 'No active flows recorded. Launch traffic simulations or start capture to generate flows.'
-                      : 'No active flows match your search filter.'}
+                  <td colSpan={8} className="px-4 py-8 text-center text-outline font-mono text-[12px]">
+                    {flows.length === 0 ? (
+                      <div className="flex flex-col items-center gap-1.5">
+                        <span className="material-symbols-outlined text-[28px] text-outline/60">waves</span>
+                        <span>No network flows currently active.</span>
+                        <span className="text-[11px] text-on-surface-variant">
+                          {isMonitoring
+                            ? 'Listening for incoming network packets on the selected interface...'
+                            : 'Start live sniffer or run a test scenario to record network flows.'}
+                        </span>
+                      </div>
+                    ) : (
+                      'No flows match your search filter.'
+                    )}
                   </td>
                 </tr>
               )}
@@ -343,8 +423,8 @@ export default function MonitoringPage({ backendConnected }) {
           </table>
         </div>
 
-        {/* Flow Pagination */}
-        <div className="h-7 px-3 bg-surface-container-lowest border-t border-outline-variant flex items-center justify-between text-outline font-mono text-[11px]">
+        {/* Pagination Toolbar */}
+        <div className="h-8 px-3.5 bg-surface-container-lowest border-t border-outline-variant flex items-center justify-between text-outline font-mono text-[11px]">
           <span>
             Showing {pagedFlows.length} of {filteredFlows.length} active flows
           </span>
@@ -352,7 +432,7 @@ export default function MonitoringPage({ backendConnected }) {
             <button
               disabled={safeFlowPage <= 1}
               onClick={() => setFlowPage((p) => Math.max(1, p - 1))}
-              className="px-1 py-0.5 rounded hover:bg-surface-container hover:text-on-surface disabled:opacity-30 transition-colors"
+              className="px-2 py-0.5 rounded hover:bg-surface-container hover:text-on-surface disabled:opacity-30 transition-colors"
             >
               &lt; Prev
             </button>
@@ -362,7 +442,7 @@ export default function MonitoringPage({ backendConnected }) {
             <button
               disabled={safeFlowPage >= totalFlowPages}
               onClick={() => setFlowPage((p) => Math.min(totalFlowPages, p + 1))}
-              className="px-1 py-0.5 rounded hover:bg-surface-container hover:text-on-surface disabled:opacity-30 transition-colors"
+              className="px-2 py-0.5 rounded hover:bg-surface-container hover:text-on-surface disabled:opacity-30 transition-colors"
             >
               Next &gt;
             </button>
@@ -373,15 +453,14 @@ export default function MonitoringPage({ backendConnected }) {
   );
 }
 
-function MCard({ label, value }) {
+function MCard({ label, value, sub }) {
   return (
-    <div className="bg-surface-container-low border border-outline-variant rounded px-2.5 py-2 flex flex-col shadow-xs">
-      <span className="font-mono text-[9px] font-medium text-outline uppercase tracking-wider">
-        {label}
-      </span>
-      <span className="text-[17px] font-semibold text-on-surface tracking-tight leading-6 mt-0.5 font-mono">
+    <div className="bg-surface-container-low border border-outline-variant rounded-lg p-3 flex flex-col justify-between shadow-xs">
+      <span className="text-[12px] font-medium text-on-surface-variant">{label}</span>
+      <span className="text-[22px] font-bold text-on-surface tracking-tight mt-1.5 font-mono">
         {typeof value === 'number' ? value.toLocaleString() : value}
       </span>
+      {sub && <span className="font-mono text-[11px] text-secondary font-medium mt-1 truncate">{sub}</span>}
     </div>
   );
 }

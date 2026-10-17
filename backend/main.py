@@ -419,6 +419,194 @@ def get_model_info():
     }
 
 
+# ════════════════════════════════════════
+#  PHASE 2: AGENT CONTROLS & TEST LAB
+# ════════════════════════════════════════
+
+from pydantic import BaseModel, Field
+from networking.client import NetShieldClient
+
+_local_agent = None
+_agent_lock = threading.Lock()
+
+
+class TestMessageRequest(BaseModel):
+    message: str = Field(default="NETSHIELD_PROBE", max_length=256)
+
+
+class CustomTrafficRequest(BaseModel):
+    mode: str = Field(default="detection_test")
+    protocol: str = Field(default="TCP")
+    source_ip: str = Field(default="192.168.1.105")
+    destination_port: int = Field(default=80, ge=1, le=65535)
+    packet_count: int = Field(default=25, ge=1, le=500)
+    tcp_flags: list[str] = Field(default=["SYN"])
+    payload: str = Field(default="PROBE_PACKET", max_length=512)
+
+
+@app.post("/api/devices/agent/connect")
+def connect_agent():
+    """
+    Connect a local test agent instance to port 5000 for local testing and demonstration.
+    """
+    global _local_agent
+    with _agent_lock:
+        state = tcp_server.get_remote_state()
+        if state.get("status") == "connected":
+            return {
+                "success": True,
+                "message": "An agent is already connected.",
+                "status": "connected",
+                "hostname": state.get("hostname"),
+                "ip": state.get("ip"),
+            }
+
+        if _local_agent:
+            _local_agent.disconnect()
+            _local_agent = None
+
+        _local_agent = NetShieldClient(host="127.0.0.1", port=SERVER_PORT)
+        _local_agent.connect()
+
+    for _ in range(15):
+        time.sleep(0.1)
+        st = tcp_server.get_remote_state()
+        if st.get("status") == "connected":
+            return {
+                "success": True,
+                "message": "Local test agent connected successfully on 127.0.0.1:5000.",
+                "status": "connected",
+                "hostname": st.get("hostname"),
+                "ip": st.get("ip"),
+            }
+
+    err = _local_agent.error_msg if _local_agent else "Connection timed out."
+    return {
+        "success": False,
+        "error": f"Failed to connect agent: {err}",
+        "status": "disconnected",
+    }
+
+
+@app.post("/api/devices/agent/disconnect")
+def disconnect_agent():
+    """
+    Disconnect active agent cleanly from the server.
+    """
+    global _local_agent
+    with _agent_lock:
+        if _local_agent:
+            _local_agent.disconnect()
+            _local_agent = None
+        tcp_server.disconnect_client()
+    return {
+        "success": True,
+        "message": "Agent disconnected.",
+        "status": "disconnected",
+    }
+
+
+@app.post("/api/devices/agent/message")
+def test_agent_message(req: TestMessageRequest):
+    """
+    Send a test message through the real TCP socket channel and measure monotonic RTT.
+    """
+    return tcp_server.send_test_message(req.message, timeout=3.0)
+
+
+@app.post("/api/simulate/custom")
+def simulate_custom_traffic(req: CustomTrafficRequest):
+    """
+    Custom Traffic Lab:
+    Mode 1 (detection_test): Routes synthesized packets through FlowAnalyzer and DetectionEngine.
+    Mode 2 (network_test): Sends verified message frame over real TCP socket channel to connected agent.
+    """
+    if req.mode == "network_test":
+        state = tcp_server.get_remote_state()
+        if state.get("status") != "connected":
+            return {
+                "success": False,
+                "mode": "network_test",
+                "error": "Real network test requires an active connected agent on Computer A (or local test agent). Connect agent first.",
+            }
+        res = tcp_server.send_test_message(f"NET_TEST:{req.payload}", timeout=3.0)
+        return {
+            "success": res.get("success", False),
+            "mode": "network_test",
+            "protocol": "TCP",
+            "destination_port": req.destination_port,
+            "message": f"Real frame delivered to {res.get('recipient')}",
+            "ack": res.get("ack_content"),
+            "rtt_ms": res.get("rtt_ms"),
+            "timestamp": res.get("timestamp"),
+            "threat_detected": False,
+            "error": res.get("error"),
+            "note": "Real network communication verified over active TCP socket. No synthetic substitutions.",
+        }
+
+    # Mode 1: detection_test
+    ip_parts = req.source_ip.strip().split(".")
+    if len(ip_parts) != 4 or not all(p.isdigit() and 0 <= int(p) <= 255 for p in ip_parts):
+        return {
+            "success": False,
+            "mode": "detection_test",
+            "error": f"Invalid source IPv4 address: '{req.source_ip}'",
+        }
+
+    proto = req.protocol.upper()
+    if proto not in ("TCP", "UDP", "ICMP"):
+        return {
+            "success": False,
+            "mode": "detection_test",
+            "error": f"Unsupported protocol: '{req.protocol}'. Must be TCP, UDP, or ICMP.",
+        }
+
+    now = time.time()
+    hex_flags = "0x0002" if "SYN" in req.tcp_flags else "0x0010"
+
+    with _events_lock:
+        start_event_count = len(_recent_events)
+
+    metrics_collector.start_monitoring()
+
+    is_scan_test = "SYN" in req.tcp_flags and req.packet_count >= 15
+    for i in range(req.packet_count):
+        dport = (req.destination_port + i) if is_scan_test else req.destination_port
+        pkt = {
+            "timestamp": now + (i * 0.02),
+            "source_ip": req.source_ip,
+            "destination_ip": get_local_ip(),
+            "source_port": 50000 + (i % 50),
+            "destination_port": dport,
+            "protocol": proto,
+            "length": max(64, min(1500, len(req.payload.encode()) + 64)),
+            "tcp_flags": hex_flags if proto == "TCP" else "",
+            "protocols_str": f"eth:ip:{proto.lower()}",
+        }
+        on_packet(pkt)
+
+    detection_engine.force_analysis()
+
+    with _events_lock:
+        new_events = list(_recent_events[:max(1, len(_recent_events) - start_event_count)]) if len(_recent_events) > start_event_count else []
+
+    threat = len(new_events) > 0
+    return {
+        "success": True,
+        "mode": "detection_test",
+        "protocol": proto,
+        "packets_evaluated": req.packet_count,
+        "source_ip": req.source_ip,
+        "destination_port": req.destination_port,
+        "threat_detected": threat,
+        "events_triggered": new_events,
+        "ml_model": detection_engine.ml_model_name,
+        "verdict": "THREAT DETECTED" if threat else "BENIGN / NORMAL",
+        "summary": f"Injected {req.packet_count} {proto} packets through FlowAnalyzer and DetectionEngine ({detection_engine.ml_model_name or 'Heuristic'}).",
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+
+
 # ── Run directly ──
 if __name__ == "__main__":
     import uvicorn
