@@ -171,6 +171,10 @@ def get_status():
             "port": SERVER_PORT,
             "running": tcp_server._running,
         },
+        "api_server": {
+            "host": API_HOST,
+            "port": API_PORT,
+        },
         "remote_device": remote_clean,
         "packet_capture": {
             "available": packet_capture.available,
@@ -423,7 +427,7 @@ def get_model_info():
 #  PHASE 2: AGENT CONTROLS & TEST LAB
 # ════════════════════════════════════════
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from networking.client import NetShieldClient
 
 _local_agent = None
@@ -432,6 +436,19 @@ _agent_lock = threading.Lock()
 
 class TestMessageRequest(BaseModel):
     message: str = Field(default="NETSHIELD_PROBE", max_length=256)
+
+
+class AgentConnectRequest(BaseModel):
+    host: str = Field(min_length=1, max_length=253)
+    port: int = Field(default=5000, ge=1, le=65535)
+
+    @field_validator("host")
+    @classmethod
+    def validate_host(cls, value: str) -> str:
+        value = value.strip()
+        if not value or any(char.isspace() for char in value):
+            raise ValueError("Enter a valid IP address or hostname without spaces.")
+        return value
 
 
 class CustomTrafficRequest(BaseModel):
@@ -445,7 +462,7 @@ class CustomTrafficRequest(BaseModel):
 
 
 @app.post("/api/devices/agent/connect")
-def connect_agent():
+def connect_agent(request: AgentConnectRequest | None = None):
     """
     Connect a local test agent instance to port 5000 for local testing and demonstration.
     """
@@ -465,7 +482,9 @@ def connect_agent():
             _local_agent.disconnect()
             _local_agent = None
 
-        _local_agent = NetShieldClient(host="127.0.0.1", port=SERVER_PORT)
+        target_host = request.host if request else "127.0.0.1"
+        target_port = request.port if request else SERVER_PORT
+        _local_agent = NetShieldClient(host=target_host, port=target_port)
         _local_agent.connect()
 
     for _ in range(15):
@@ -474,16 +493,22 @@ def connect_agent():
         if st.get("status") == "connected":
             return {
                 "success": True,
-                "message": "Local test agent connected successfully on 127.0.0.1:5000.",
+                "message": f"Agent connected successfully to {target_host}:{target_port}.",
                 "status": "connected",
                 "hostname": st.get("hostname"),
                 "ip": st.get("ip"),
             }
 
     err = _local_agent.error_msg if _local_agent else "Connection timed out."
+    if "refused" in err.lower():
+        error = "Connection refused; check whether the server is running."
+    elif "timed out" in err.lower() or "timeout" in err.lower():
+        error = "Connection timed out; check network connectivity and firewall rules."
+    else:
+        error = f"Unable to connect: {err}"
     return {
         "success": False,
-        "error": f"Failed to connect agent: {err}",
+        "error": error,
         "status": "disconnected",
     }
 
@@ -611,4 +636,3 @@ def simulate_custom_traffic(req: CustomTrafficRequest):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host=API_HOST, port=API_PORT)
-

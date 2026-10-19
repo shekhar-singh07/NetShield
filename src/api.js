@@ -4,11 +4,30 @@
  * All data comes from real backend — never fabricated.
  */
 
-const API_BASE =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) ||
-  (typeof window !== 'undefined' && window.location.hostname && window.location.hostname !== 'localhost'
-    ? `http://${window.location.hostname}:8000`
-    : 'http://localhost:8000');
+function getApiBase() {
+  if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+
+  if (typeof window === 'undefined') {
+    return 'http://localhost:8000';
+  }
+
+  const { hostname, protocol } = window.location;
+  if (hostname === 'localhost' || hostname === '127.0.0.1') {
+    return 'http://localhost:8000';
+  }
+
+  // GitHub Codespaces forwards each port through a host such as
+  // <codespace>-5173.app.github.dev.
+  if (hostname.includes('-5173.')) {
+    return `${protocol}//${hostname.replace('-5173.', '-8000.')}`;
+  }
+
+  return `${protocol}//${hostname}:8000`;
+}
+
+const API_BASE = getApiBase();
 
 async function fetchJSON(url) {
   const res = await fetch(`${API_BASE}${url}`);
@@ -65,7 +84,8 @@ export const clearEvents = () => postJSON('/api/events/clear');
 export const fetchModelInfo = () => fetchJSON('/api/detection/model');
 
 /** POST /api/devices/agent/connect — connect local test agent */
-export const connectAgent = () => postJSON('/api/devices/agent/connect');
+export const connectAgent = (host = '127.0.0.1', port = 5000) =>
+  postJSON('/api/devices/agent/connect', { host, port });
 
 /** POST /api/devices/agent/disconnect — disconnect agent */
 export const disconnectAgent = () => postJSON('/api/devices/agent/disconnect');

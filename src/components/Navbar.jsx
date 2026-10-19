@@ -12,7 +12,7 @@ const NAV_LINKS = [
   { to: '/devices', icon: 'router', label: 'Devices' },
 ];
 
-export default function Navbar({ backendConnected }) {
+export default function Navbar({ backendConnected, onChangeRole }) {
   return (
     <nav className="fixed top-0 left-0 right-0 h-12 bg-surface-container-lowest/95 backdrop-blur border-b border-outline-variant z-50 px-4 flex items-center justify-between select-none">
       {/* Left — Brand + Nav Links */}
@@ -49,6 +49,13 @@ export default function Navbar({ backendConnected }) {
 
       {/* Right — Backend status */}
       <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={onChangeRole}
+          className="hidden rounded-lg border border-outline-variant px-2 py-1 font-mono text-[11px] text-on-surface-variant hover:border-primary/50 hover:text-on-surface sm:inline-flex"
+        >
+          Change role
+        </button>
         <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border font-mono text-[11px] font-medium transition-colors ${
           backendConnected
             ? 'bg-surface-container-high border-emerald-500/30 text-emerald-300'
