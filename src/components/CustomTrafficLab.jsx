@@ -47,9 +47,9 @@ export default function CustomTrafficLab({ onTestComplete, onToast }) {
       if (res.success) {
         onTestComplete?.(res);
         if (mode === 'detection_test') {
-          onToast?.(`Test completed: ${res.verdict} (${res.packets_evaluated} pkts)`);
+          onToast?.(`${res.verdict} · ${res.packets_evaluated} pkts`);
         } else {
-          onToast?.(`Real network frame acknowledged in ${res.rtt_ms} ms`);
+          onToast?.(`ACK in ${res.rtt_ms} ms`);
         }
       } else {
         onToast?.(`Test failed: ${res.error}`);
@@ -69,10 +69,7 @@ export default function CustomTrafficLab({ onTestComplete, onToast }) {
         <div className="flex items-center gap-2.5">
           <span className="material-symbols-outlined text-[20px] text-primary">science</span>
           <span className="font-mono text-[13px] font-semibold text-on-surface uppercase tracking-wider">
-            Custom Traffic &amp; Detection Lab
-          </span>
-          <span className="px-2 py-0.5 rounded bg-surface-container text-on-surface-variant font-mono text-[10px] font-semibold border border-outline-variant">
-            DUAL-MODE TESTBED
+            Custom Lab
           </span>
         </div>
 
@@ -80,7 +77,7 @@ export default function CustomTrafficLab({ onTestComplete, onToast }) {
           onClick={() => setIsExpanded(!isExpanded)}
           className="text-outline hover:text-on-surface text-[12px] font-mono flex items-center gap-1 transition-colors"
         >
-          <span>{isExpanded ? 'Collapse Lab' : 'Configure Custom Vectors'}</span>
+          <span>{isExpanded ? 'Hide' : 'Show'}</span>
           <span className="material-symbols-outlined text-[16px]">
             {isExpanded ? 'expand_less' : 'expand_more'}
           </span>
@@ -100,7 +97,7 @@ export default function CustomTrafficLab({ onTestComplete, onToast }) {
               }`}
             >
               <span className="material-symbols-outlined text-[16px]">psychology</span>
-              <span>Mode 1: Synthetic Detection Test (Pipeline Evaluation)</span>
+              <span>Detection test</span>
             </button>
 
             <button
@@ -112,7 +109,7 @@ export default function CustomTrafficLab({ onTestComplete, onToast }) {
               }`}
             >
               <span className="material-symbols-outlined text-[16px]">lan</span>
-              <span>Mode 2: Real Network Test (Active Agent Channel)</span>
+              <span>Network test</span>
             </button>
           </div>
 
@@ -128,15 +125,15 @@ export default function CustomTrafficLab({ onTestComplete, onToast }) {
                     onChange={(e) => setProtocol(e.target.value)}
                     className="h-8 px-2.5 rounded bg-surface-container-lowest border border-outline-variant font-mono text-[12px] text-on-surface focus:outline-none focus:border-primary"
                   >
-                    <option value="TCP">TCP (Transmission Control)</option>
-                    <option value="UDP">UDP (User Datagram)</option>
-                    <option value="ICMP">ICMP (Ping / Control)</option>
+                    <option value="TCP">TCP</option>
+                    <option value="UDP">UDP</option>
+                    <option value="ICMP">ICMP</option>
                   </select>
                 </div>
 
                 {/* Source IP */}
                 <div className="flex flex-col gap-1">
-                  <label className="font-mono text-outline text-[11px]">Simulated Source IPv4</label>
+                  <label className="font-mono text-outline text-[11px]">Source IP</label>
                   <input
                     type="text"
                     value={sourceIp}
@@ -161,7 +158,7 @@ export default function CustomTrafficLab({ onTestComplete, onToast }) {
 
                 {/* Packet Count */}
                 <div className="flex flex-col gap-1">
-                  <label className="font-mono text-outline text-[11px]">Packet Volume (1-500)</label>
+                  <label className="font-mono text-outline text-[11px]">Packets (1-500)</label>
                   <input
                     type="number"
                     min="1"
@@ -175,7 +172,7 @@ export default function CustomTrafficLab({ onTestComplete, onToast }) {
                 {/* TCP Flags */}
                 {protocol === 'TCP' && (
                   <div className="sm:col-span-2 flex flex-col gap-1">
-                    <label className="font-mono text-outline text-[11px]">TCP Control Flags</label>
+                    <label className="font-mono text-outline text-[11px]">TCP flags</label>
                     <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
                       {AVAILABLE_FLAGS.map((f) => {
                         const active = selectedFlags.includes(f);
@@ -200,7 +197,7 @@ export default function CustomTrafficLab({ onTestComplete, onToast }) {
 
                 {/* Payload */}
                 <div className={protocol === 'TCP' ? 'sm:col-span-2 flex flex-col gap-1' : 'sm:col-span-4 flex flex-col gap-1'}>
-                  <label className="font-mono text-outline text-[11px]">Payload / Signature String</label>
+                  <label className="font-mono text-outline text-[11px]">Payload</label>
                   <input
                     type="text"
                     value={payload}
@@ -214,14 +211,10 @@ export default function CustomTrafficLab({ onTestComplete, onToast }) {
               <div className="bg-surface-container-lowest p-3.5 rounded-lg border border-outline-variant/60 flex flex-col gap-2.5 text-[12px]">
                 <div className="flex items-center gap-2 text-on-surface font-semibold">
                   <span className="material-symbols-outlined text-secondary text-[18px]">verified</span>
-                  <span>Real Network Frame Transmission (Port 5000 Channel)</span>
+                  <span>Network test · port 5000</span>
                 </div>
-                <p className="text-on-surface-variant text-[12px] leading-relaxed">
-                  Transmits an actual message frame over the authenticated bidirectional TCP channel to Computer A.
-                  Monitors round-trip delivery time and verifies agent receiver responsiveness.
-                </p>
                 <div className="flex flex-col gap-1 mt-1">
-                  <label className="font-mono text-outline text-[11px]">Transmission Payload</label>
+                  <label className="font-mono text-outline text-[11px]">Payload</label>
                   <input
                     type="text"
                     value={payload}
@@ -234,13 +227,7 @@ export default function CustomTrafficLab({ onTestComplete, onToast }) {
             )}
 
             {/* Execute Button */}
-            <div className="flex items-center justify-between pt-1">
-              <div className="font-mono text-[11px] text-outline">
-                {mode === 'detection_test'
-                  ? 'Offline synthetic vector — Safe for live production environments.'
-                  : 'Real socket transmission — Requires active Computer A agent link.'}
-              </div>
-
+            <div className="flex items-center justify-end pt-1">
               <button
                 type="submit"
                 disabled={loading}
@@ -249,7 +236,7 @@ export default function CustomTrafficLab({ onTestComplete, onToast }) {
                 <span className="material-symbols-outlined text-[18px]">
                   {loading ? 'hourglass_top' : 'bolt'}
                 </span>
-                <span>{loading ? 'Processing Vector...' : mode === 'detection_test' ? 'Inject Test Vector' : 'Transmit Network Frame'}</span>
+                <span>{loading ? 'Running...' : 'Run test'}</span>
               </button>
             </div>
           </form>
@@ -284,19 +271,18 @@ export default function CustomTrafficLab({ onTestComplete, onToast }) {
 
               {result.success ? (
                 <div className="flex flex-col gap-1.5 text-on-surface-variant text-[12px] pt-1">
-                  <div>Summary: <span className="text-on-surface">{result.summary || result.message}</span></div>
+                  {result.packets_evaluated != null && (
+                    <div>{result.packets_evaluated} packets evaluated</div>
+                  )}
                   {result.events_triggered && result.events_triggered.length > 0 && (
                     <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                      <span className="text-outline">Triggered Signatures:</span>
+                      <span className="text-outline">Triggered</span>
                       {result.events_triggered.map((ev, i) => (
                         <span key={i} className="px-2 py-0.5 rounded bg-error-container/40 text-error border border-error-container font-semibold text-[11px]">
                           {ev.type || ev}
                         </span>
                       ))}
                     </div>
-                  )}
-                  {result.note && (
-                    <div className="text-outline text-[11px] mt-1 italic">{result.note}</div>
                   )}
                 </div>
               ) : (

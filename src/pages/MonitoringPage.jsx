@@ -1,10 +1,7 @@
 /**
- * MonitoringPage — Live Network Traffic & Packet Capture Console
- * Ownership: Packet-capture controls, live traffic visualization, traffic metrics, and active network flows.
- * Attack simulation studio is relocated to /security per UI/UX ownership guidelines.
+ * MonitoringPage — live capture controls, traffic metrics, charts, flows.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
 import {
   fetchStatus,
   fetchMetrics,
@@ -90,8 +87,34 @@ export default function MonitoringPage({ backendConnected }) {
 
   const isMonitoring = status?.monitoring || false;
   const captureAvail = status?.packet_capture?.available || false;
+  const captureRunning = status?.packet_capture?.running || false;
   const captureIface = status?.packet_capture?.interface || '(none)';
   const protocols = metrics?.protocols || {};
+  const actionIsError = actionMsg.startsWith('Failed') || actionMsg.startsWith('Error');
+
+  let banner;
+  if (captureRunning) {
+    banner = {
+      tone: 'bg-secondary/10 border-secondary/30 text-secondary',
+      icon: 'check_circle',
+      text: `Live capture · ${captureIface !== '(none)' ? captureIface : 'TShark'}`,
+      next: 'Next: watch charts and flows below.',
+    };
+  } else if (!captureAvail) {
+    banner = {
+      tone: 'bg-amber-500/10 border-amber-500/30 text-amber-400',
+      icon: 'signal_cellular_alt',
+      text: 'Synthetic mode · TShark not installed.',
+      next: 'Next: install Wireshark, or run simulations.',
+    };
+  } else {
+    banner = {
+      tone: 'bg-amber-500/10 border-amber-500/30 text-amber-400',
+      icon: 'hourglass_top',
+      text: 'Capture stopped.',
+      next: 'Next: press Start Live Sniffer.',
+    };
+  }
 
   const handleStart = async () => {
     setActionLoading(true);
@@ -150,13 +173,22 @@ export default function MonitoringPage({ backendConnected }) {
 
   return (
     <div className="flex flex-col gap-4">
+      {/* ── Status banner ── */}
+      <div className={`flex items-start gap-2.5 rounded-lg border p-3.5 ${banner.tone}`}>
+        <span className="material-symbols-outlined text-[20px] leading-none">{banner.icon}</span>
+        <div className="flex flex-col gap-1">
+          <span className="font-mono text-[13px] font-semibold">{banner.text}</span>
+          <span className="font-mono text-[12px] opacity-90">{banner.next}</span>
+        </div>
+      </div>
+
       {/* ── Packet Capture Controls Bar ── */}
       <div className="bg-surface-container-low border border-outline-variant rounded-lg p-3.5 flex flex-wrap items-center justify-between gap-3 shadow-xs">
-        {/* Actions & Capture State */}
+        {/* Actions */}
         <div className="flex flex-wrap items-center gap-3">
           <button
             onClick={handleStart}
-            disabled={isMonitoring || !captureAvail || actionLoading}
+            disabled={captureRunning || !captureAvail || actionLoading}
             className="h-9 px-4 rounded-lg bg-emerald-500/20 border border-emerald-500/40 hover:bg-emerald-500/30 text-emerald-300 font-mono text-[13px] font-semibold transition-all flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed shadow-xs"
           >
             <span className="material-symbols-outlined text-[18px]">play_arrow</span>
@@ -171,33 +203,6 @@ export default function MonitoringPage({ backendConnected }) {
             <span className="material-symbols-outlined text-[18px]">stop</span>
             <span>Stop Capture</span>
           </button>
-
-          {/* Explicit Engine Status Indicator */}
-          <div
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border font-mono text-[12px] font-semibold ${
-              isMonitoring
-                ? 'bg-surface-container-high border-emerald-500/40 text-emerald-300'
-                : 'bg-surface-container border-outline-variant text-outline'
-            }`}
-          >
-            <div className="relative flex items-center justify-center w-2.5 h-2.5">
-              {isMonitoring && (
-                <span className="beacon-ring absolute inline-flex h-3.5 w-3.5 rounded-full bg-emerald-400 opacity-60" />
-              )}
-              <span
-                className={`relative inline-flex rounded-full h-2 w-2 ${
-                  isMonitoring ? 'bg-emerald-400' : 'bg-outline'
-                }`}
-              />
-            </div>
-            <span>
-              {isMonitoring
-                ? 'INSPECTION ACTIVELY RUNNING'
-                : captureAvail
-                ? 'CAPTURE ENGINE READY'
-                : 'SYNTHETIC TESTBED MODE'}
-            </span>
-          </div>
         </div>
 
         {/* Interface & Feedback */}
@@ -210,7 +215,7 @@ export default function MonitoringPage({ backendConnected }) {
                 onChange={(e) => setSelectedIface(e.target.value)}
                 className="h-8 px-2.5 rounded bg-surface-container-lowest border border-outline-variant font-mono text-[12px] text-on-surface focus:outline-none focus:border-primary"
               >
-                <option value="">Auto-Detect Interface</option>
+                <option value="">Auto-detect</option>
                 {interfaces.map((iface, i) => (
                   <option key={i} value={iface.split('.')[0]?.trim() || iface}>
                     {iface}
@@ -225,58 +230,20 @@ export default function MonitoringPage({ backendConnected }) {
           </div>
 
           {actionMsg && (
-            <span className="font-mono text-[12px] text-secondary font-medium bg-surface-container px-2.5 py-1 rounded border border-secondary/30">
+            <span
+              className={`font-mono text-[12px] font-medium bg-surface-container px-2.5 py-1 rounded border ${
+                actionIsError
+                  ? 'text-error border-error/30'
+                  : 'text-secondary border-secondary/30'
+              }`}
+            >
               {actionMsg}
             </span>
           )}
         </div>
       </div>
 
-      {/* ── Guidance Banner: TShark Unavailable Notice (if applicable) ── */}
-      {!captureAvail && (
-        <div className="bg-surface-container-low border border-tertiary-container/40 rounded-lg p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
-          <div className="flex items-start gap-3">
-            <span className="material-symbols-outlined text-tertiary text-[22px] mt-0.5">info</span>
-            <div>
-              <div className="text-[13px] font-semibold text-on-surface flex items-center gap-2">
-                <span>Packet Capture Unavailable on Host</span>
-                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-tertiary-container/30 text-tertiary-fixed-dim border border-tertiary-container/40">
-                  TSHARK NOT INSTALLED
-                </span>
-              </div>
-              <p className="text-[12px] text-on-surface-variant mt-0.5 leading-relaxed">
-                TShark binary was not found in PATH. Live network packet sniffing is paused, but socket listening on port 5000 and simulation tests remain active.
-              </p>
-            </div>
-          </div>
-          <Link
-            to="/security"
-            className="shrink-0 px-3 py-1.5 rounded bg-surface-container border border-outline-variant hover:bg-surface-container-high text-primary font-mono text-[12px] font-medium transition-colors flex items-center gap-1"
-          >
-            <span>Run Simulation Test</span>
-            <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
-          </Link>
-        </div>
-      )}
-
-      {/* ── Guidance Banner: Attack Simulation Notice ── */}
-      <div className="bg-surface-container-lowest border border-outline-variant/70 rounded-lg p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-[13px]">
-        <div className="flex items-center gap-2.5 text-on-surface-variant">
-          <span className="material-symbols-outlined text-primary text-[18px]">psychology</span>
-          <span>
-            Looking to inject test traffic, simulate port scans, or test intrusion detection?
-          </span>
-        </div>
-        <Link
-          to="/security"
-          className="text-primary hover:text-secondary font-mono text-[12px] font-medium flex items-center gap-1 transition-colors shrink-0"
-        >
-          <span>Open Attack Simulation Studio</span>
-          <span className="material-symbols-outlined text-[15px]">arrow_forward</span>
-        </Link>
-      </div>
-
-      {/* ── Key Network Metrics Bar (Focused, High-Value) ── */}
+      {/* ── Key Network Metrics Bar ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <MCard
           label="Total Packets"
@@ -291,7 +258,6 @@ export default function MonitoringPage({ backendConnected }) {
         <MCard
           label="Throughput"
           value={metrics?.bandwidth_mbps != null ? `${metrics.bandwidth_mbps} Mbps` : '0 Mbps'}
-          sub="Live interface rate"
         />
         <MCard
           label="Round-Trip RTT"
@@ -303,7 +269,7 @@ export default function MonitoringPage({ backendConnected }) {
       {/* ── Live Traffic Visualization (TrafficChart + ProtocolDistribution) ── */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
         <div className="lg:col-span-8 bg-surface-container-low border border-outline-variant rounded-lg overflow-hidden shadow-xs">
-          <TrafficChart data={chartData} isMonitoring={isMonitoring} />
+          <TrafficChart data={chartData} isMonitoring={captureRunning} />
         </div>
         <div className="lg:col-span-4">
           <ProtocolDistribution protocols={protocols} />
@@ -318,9 +284,6 @@ export default function MonitoringPage({ backendConnected }) {
             <span className="material-symbols-outlined text-[18px] text-secondary">alt_route</span>
             <span className="text-[13px] font-semibold text-on-surface uppercase tracking-wider font-mono">
               Active Network Flows ({flows.length})
-            </span>
-            <span className="px-2 py-0.5 rounded bg-surface-container text-outline font-mono text-[11px] border border-outline-variant">
-              5-Tuple Flow Inspection
             </span>
           </div>
 
@@ -406,11 +369,11 @@ export default function MonitoringPage({ backendConnected }) {
                     {flows.length === 0 ? (
                       <div className="flex flex-col items-center gap-1.5">
                         <span className="material-symbols-outlined text-[28px] text-outline/60">waves</span>
-                        <span>No network flows currently active.</span>
+                        <span>No active flows.</span>
                         <span className="text-[11px] text-on-surface-variant">
                           {isMonitoring
-                            ? 'Listening for incoming network packets on the selected interface...'
-                            : 'Start live sniffer or run a test scenario to record network flows.'}
+                            ? 'Waiting for packets…'
+                            : 'Start capture or run a simulation.'}
                         </span>
                       </div>
                     ) : (

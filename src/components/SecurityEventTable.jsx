@@ -21,6 +21,7 @@ const SEVERITY_CONFIG = {
 
 export default function SecurityEventTable({
   events = [],
+  simulatedKeys = new Set(),
   onRefresh,
   onToast,
   pageSize = 8,
@@ -212,6 +213,12 @@ export default function SecurityEventTable({
                           ML
                         </span>
                       )}
+                      {simulatedKeys.size > 0 &&
+                        simulatedKeys.has(`${evt.timestamp}|${evt.type}|${evt.source_ip}`) && (
+                          <span className="px-1 py-0.2 rounded bg-amber-500/15 text-amber-400 text-[9px] font-bold border border-amber-500/30">
+                            Simulated
+                          </span>
+                        )}
                       <span>{evt.type}</span>
                     </div>
                   </td>
@@ -247,8 +254,8 @@ export default function SecurityEventTable({
               <tr>
                 <td colSpan={8} className="px-3 py-6 text-center text-outline font-mono text-[11px]">
                   {events.length === 0
-                    ? 'No security events detected yet. Test detection by launching a scenario above!'
-                    : 'No events match the current filter or search criteria.'}
+                    ? 'No events yet. Run a simulation above.'
+                    : 'No events match this filter.'}
                 </td>
               </tr>
             )}

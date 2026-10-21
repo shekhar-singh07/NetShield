@@ -87,17 +87,17 @@ export default function TrafficChart({ data, isMonitoring, onToast }) {
         <div className="flex items-center gap-2">
           <span className="text-[13px] font-semibold text-on-surface flex items-center gap-1.5 leading-[18px]">
             <span className="material-symbols-outlined text-outline text-[16px]">show_chart</span>
-            Network Traffic
+            {isMonitoring ? 'Live traffic' : 'Synthetic traffic'}
           </span>
           <span className="text-outline-variant">|</span>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1.5">
               <span className="w-2.5 h-0.5 bg-primary inline-block" />
-              <span className="font-mono text-[11px] text-on-surface-variant">Incoming (eth0 RX)</span>
+              <span className="font-mono text-[11px] text-on-surface-variant">Incoming (RX)</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="w-2.5 h-0.5 bg-secondary inline-block" />
-              <span className="font-mono text-[11px] text-on-surface-variant">Outgoing (eth0 TX)</span>
+              <span className="font-mono text-[11px] text-on-surface-variant">Outgoing (TX)</span>
             </div>
           </div>
         </div>
@@ -122,9 +122,6 @@ export default function TrafficChart({ data, isMonitoring, onToast }) {
               </button>
             ))}
           </div>
-          <button className="w-6 h-6 flex items-center justify-center text-outline hover:text-on-surface active:scale-90 transition-all" title="Panel Options">
-            <span className="material-symbols-outlined text-[14px]">more_vert</span>
-          </button>
         </div>
       </div>
 

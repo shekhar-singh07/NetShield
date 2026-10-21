@@ -1,18 +1,26 @@
 /**
- * DevicesPage — Connected Devices, Agent Status & Network Topology
- * Ownership: Agent/server topology, connection state, configuration, and expandable device diagnostics.
- * Employs progressive disclosure for detailed socket telemetry and raw heartbeat sequences.
+ * DevicesPage — server & agent status, probe test, connect command, details.
  */
 import { useState, useEffect, useCallback } from 'react';
 import { fetchDevices, fetchStatus } from '../api';
 import { DisconnectedBanner } from './OverviewPage';
 import AgentControlPanel from '../components/AgentControlPanel';
 
+function timeAgo(iso) {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (s < 90) return `${s}s ago`;
+  if (s < 5400) return `${Math.floor(s / 60)}m ago`;
+  return `${Math.floor(s / 3600)}h ago`;
+}
+
 export default function DevicesPage({ backendConnected }) {
   const [devices, setDevices] = useState(null);
   const [status, setStatus] = useState(null);
   const [copiedCmd, setCopiedCmd] = useState(false);
-  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+  const [probeVerified, setProbeVerified] = useState(false);
   const [toastMsg, setToastMsg] = useState(null);
 
   const showToast = useCallback((msg) => {
@@ -53,6 +61,14 @@ export default function DevicesPage({ backendConnected }) {
     };
   }, [backendConnected]);
 
+  const isRemoteConnected = devices?.remote?.status === 'connected';
+
+  const [wasConnected, setWasConnected] = useState(isRemoteConnected);
+  if (isRemoteConnected !== wasConnected) {
+    setWasConnected(isRemoteConnected);
+    if (!isRemoteConnected) setProbeVerified(false);
+  }
+
   if (!backendConnected) {
     return <DisconnectedBanner />;
   }
@@ -60,15 +76,60 @@ export default function DevicesPage({ backendConnected }) {
   const local = devices?.local || {};
   const remote = devices?.remote || {};
   const tcpServer = devices?.tcp_server || {};
-  const isRemoteConnected = remote.status === 'connected';
+  const agentStatus = remote.status;
+  const serverPort = tcpServer.port || 5000;
 
-  const clientCmd = `python backend/networking/client.py --host ${local.ip || '192.168.x.x'} --port ${tcpServer.port || 5000}`;
+  const heartbeatSeq = /Heartbeat #(\d+)/.exec(remote.last_message || '');
+  const seqText = heartbeatSeq
+    ? `#${heartbeatSeq[1]}`
+    : agentStatus === 'connected' ? '#0' : '—';
+
+  const lostAgo = remote.last_heartbeat ? timeAgo(remote.last_heartbeat) : null;
+
+  let banner;
+  if (isRemoteConnected) {
+    banner = {
+      tone: 'bg-secondary/10 border-secondary/30 text-secondary',
+      icon: 'check_circle',
+      text: `Agent connected · heartbeat OK${remote.rtt_ms != null ? ` · RTT ${remote.rtt_ms} ms` : ''}`,
+      next: 'Next: run a probe, then open Security.',
+    };
+  } else if (agentStatus === 'connecting') {
+    banner = {
+      tone: 'bg-amber-500/10 border-amber-500/30 text-amber-400',
+      icon: 'hourglass_top',
+      text: 'Connecting to agent.',
+      next: 'Next: wait for the handshake.',
+    };
+  } else if (lostAgo) {
+    banner = {
+      tone: 'bg-error-container/20 border-error/40 text-error',
+      icon: 'link_off',
+      text: `Connection lost ${lostAgo}`,
+      next: 'Next: run the command below on the other computer.',
+    };
+  } else {
+    banner = {
+      tone: 'bg-amber-500/10 border-amber-500/30 text-amber-400',
+      icon: 'hourglass_top',
+      text: 'Waiting for agent.',
+      next: 'Next: run the command below on the other computer.',
+    };
+  }
+
+  const steps = [
+    { label: `Server listening (${local.ip || '—'}:${serverPort})`, done: !!tcpServer.running },
+    { label: 'Agent connected', done: isRemoteConnected },
+    { label: 'Probe verified', done: probeVerified },
+  ];
+
+  const clientCmd = `python backend/networking/client.py --host ${local.ip || '192.168.x.x'} --port ${serverPort}`;
 
   const copyCommand = () => {
     navigator.clipboard.writeText(clientCmd);
     setCopiedCmd(true);
     setTimeout(() => setCopiedCmd(false), 2200);
-    showToast('Copied client command to clipboard.');
+    showToast('Copied command to clipboard.');
   };
 
   return (
@@ -81,227 +142,220 @@ export default function DevicesPage({ backendConnected }) {
         </div>
       )}
 
-      {/* ── Network Topology Visualization ── */}
-      <div className="bg-surface-container-low border border-outline-variant rounded-lg p-4 shadow-xs">
-        <div className="flex items-center justify-between border-b border-outline-variant/60 pb-3 mb-4">
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-primary text-[20px]">hub</span>
-            <span className="font-mono text-[13px] font-semibold text-on-surface uppercase tracking-wider">
-              Network Topology &amp; Agent Channel
-            </span>
-          </div>
-          <span className="font-mono text-[11px] text-outline">
-            {isRemoteConnected ? 'Telemetry Link Active' : 'Standby / Listening on 0.0.0.0'}
-          </span>
+      {/* ── Status banner ── */}
+      <div className={`flex items-start gap-2.5 rounded-lg border p-3.5 ${banner.tone}`}>
+        <span className="material-symbols-outlined text-[20px] leading-none">{banner.icon}</span>
+        <div className="flex flex-col gap-1">
+          <span className="font-mono text-[13px] font-semibold">{banner.text}</span>
+          <span className="font-mono text-[12px] opacity-90">{banner.next}</span>
         </div>
+      </div>
 
-        <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-          {/* Node 1: Computer A (Agent) */}
+      {/* ── Setup tracker ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        {steps.map((step, i) => (
           <div
-            className={`flex-1 w-full p-3.5 rounded-lg border transition-all ${
-              isRemoteConnected
-                ? 'bg-surface-container-high border-secondary/40 shadow-xs'
-                : 'bg-surface-container-lowest border-outline-variant/60'
+            key={step.label}
+            className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg border ${
+              step.done
+                ? 'bg-secondary/10 border-secondary/30'
+                : 'bg-surface-container-low border-outline-variant'
             }`}
           >
-            <div className="flex items-center justify-between mb-2.5">
-              <div className="flex items-center gap-2.5">
-                <span className={`material-symbols-outlined text-[22px] ${isRemoteConnected ? 'text-secondary' : 'text-outline'}`}>
-                  computer
-                </span>
-                <div>
-                  <div className="font-mono text-[10px] text-outline uppercase tracking-wider">COMPUTER A (AGENT)</div>
-                  <div className="text-[14px] font-semibold text-on-surface">
-                    {remote.hostname || (isRemoteConnected ? 'Remote Client' : 'No Agent Connected')}
-                  </div>
-                </div>
-              </div>
+            <span
+              className={`flex items-center justify-center w-5 h-5 shrink-0 rounded-full font-mono text-[11px] font-bold ${
+                step.done
+                  ? 'bg-secondary/20 text-secondary'
+                  : 'bg-surface-container text-outline'
+              }`}
+            >
+              {step.done ? (
+                <span className="material-symbols-outlined text-[15px]">check</span>
+              ) : (
+                i + 1
+              )}
+            </span>
+            <span
+              className={`font-mono text-[12px] ${step.done ? 'text-on-surface' : 'text-outline'}`}
+            >
+              {step.label}
+            </span>
+          </div>
+        ))}
+      </div>
 
+      {/* ── Device cards ── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="bg-surface-container-low border border-outline-variant rounded-lg p-4 shadow-xs">
+          <div className="flex items-center justify-between mb-3 border-b border-outline-variant/60 pb-2.5">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-[18px] text-primary">dns</span>
+              <span className="font-mono text-[13px] font-semibold text-on-surface uppercase tracking-wider">
+                This computer (Server)
+              </span>
+            </div>
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-mono text-[11px] font-semibold border bg-primary/15 text-primary border-primary/30">
+              <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+              ONLINE
+            </span>
+          </div>
+          <div className="font-mono text-[12px] space-y-2">
+            <div className="flex justify-between">
+              <span className="text-outline">Hostname</span>
+              <span className="text-on-surface font-medium">{local.hostname || '—'}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-outline">IP</span>
+              <span className="text-on-surface font-medium">{local.ip || '—'}</span>
+            </div>
+          </div>
+        </div>
+
+        <div
+          className={`rounded-lg border p-4 shadow-xs ${
+            isRemoteConnected
+              ? 'bg-surface-container-high border-secondary/40'
+              : 'bg-surface-container-low border-outline-variant'
+          }`}
+        >
+          <div className="flex items-center justify-between mb-3 border-b border-outline-variant/60 pb-2.5">
+            <div className="flex items-center gap-2">
               <span
-                className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-mono text-[11px] font-semibold border ${
-                  isRemoteConnected
-                    ? 'bg-secondary/15 text-secondary border-secondary/30'
-                    : 'bg-surface-container text-outline border-outline-variant'
-                }`}
+                className={`material-symbols-outlined text-[18px] ${isRemoteConnected ? 'text-secondary' : 'text-outline'}`}
               >
-                <span className={`w-1.5 h-1.5 rounded-full ${isRemoteConnected ? 'bg-secondary' : 'bg-outline'}`} />
-                {isRemoteConnected ? 'CONNECTED' : 'WAITING'}
+                computer
+              </span>
+              <span className="font-mono text-[13px] font-semibold text-on-surface uppercase tracking-wider">
+                Remote agent
               </span>
             </div>
-
-            <div className="font-mono text-[12px] space-y-1.5 text-on-surface-variant pt-1 border-t border-outline-variant/40">
-              <div className="flex justify-between">
-                <span className="text-outline">Socket Endpoint:</span>
-                <span className="text-on-surface font-medium">{remote.ip ? `${remote.ip}:${remote.port}` : 'Waiting on :5000'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-outline">Round-Trip RTT:</span>
-                <span className="text-secondary font-medium">{remote.rtt_ms != null ? `${remote.rtt_ms} ms` : '—'}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Connection Channel (Middle) */}
-          <div className="flex flex-col items-center justify-center px-2 py-1">
-            <span className="font-mono text-[11px] text-outline uppercase tracking-wider mb-1">
-              TCP Socket (Port {tcpServer.port || 5000})
-            </span>
-            <div className="flex items-center gap-1.5">
-              <div className={`h-0.5 w-10 sm:w-16 ${isRemoteConnected ? 'bg-secondary animate-pulse' : 'bg-outline-variant'}`} />
-              <div className={`p-1.5 rounded-full border ${
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-mono text-[11px] font-semibold border ${
                 isRemoteConnected
-                  ? 'bg-secondary/15 text-secondary border-secondary/40'
+                  ? 'bg-secondary/15 text-secondary border-secondary/30'
                   : 'bg-surface-container text-outline border-outline-variant'
-              }`}>
-                <span className="material-symbols-outlined text-[18px]">
-                  {isRemoteConnected ? 'sync_alt' : 'link_off'}
-                </span>
-              </div>
-              <div className={`h-0.5 w-10 sm:w-16 ${isRemoteConnected ? 'bg-secondary animate-pulse' : 'bg-outline-variant'}`} />
-            </div>
-            <span className="font-mono text-[10px] text-outline-variant mt-1.5">
-              {isRemoteConnected ? 'Heartbeat Active (3s Loop)' : 'Listening for Incoming Stream'}
+              }`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${isRemoteConnected ? 'bg-secondary' : 'bg-outline'}`} />
+              {isRemoteConnected ? 'CONNECTED' : 'WAITING'}
             </span>
           </div>
-
-          {/* Node 2: Computer B (Server / NIDS) */}
-          <div className="flex-1 w-full p-3.5 rounded-lg border bg-surface-container-high border-primary/40 shadow-xs">
-            <div className="flex items-center justify-between mb-2.5">
-              <div className="flex items-center gap-2.5">
-                <span className="material-symbols-outlined text-[22px] text-primary">dns</span>
-                <div>
-                  <div className="font-mono text-[10px] text-outline uppercase tracking-wider">COMPUTER B (SERVER / NIDS)</div>
-                  <div className="text-[14px] font-semibold text-on-surface">
-                    {local.hostname || 'Local Machine'}
-                  </div>
-                </div>
-              </div>
-
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-mono text-[11px] font-semibold border bg-primary/15 text-primary border-primary/30">
-                <span className="w-1.5 h-1.5 rounded-full bg-primary" />
-                ONLINE (READY)
-              </span>
+          <div className="font-mono text-[12px] space-y-2">
+            <div className="flex justify-between">
+              <span className="text-outline">Hostname</span>
+              <span className="text-on-surface font-medium">{remote.hostname || '—'}</span>
             </div>
-
-            <div className="font-mono text-[12px] space-y-1.5 text-on-surface-variant pt-1 border-t border-outline-variant/40">
-              <div className="flex justify-between">
-                <span className="text-outline">IP Address:</span>
-                <span className="text-on-surface font-medium">{local.ip || '127.0.0.1'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-outline">Capture Interface:</span>
-                <span className="text-primary font-medium">{local.interface || 'Default (Synthetic)'}</span>
-              </div>
+            <div className="flex justify-between">
+              <span className="text-outline">IP</span>
+              <span className="text-on-surface font-medium">{remote.ip || '—'}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-outline">RTT</span>
+              <span className="text-secondary font-medium">
+                {remote.rtt_ms != null ? `${remote.rtt_ms} ms` : '—'}
+              </span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* ── Phase 2: Agent Controls & Real ACK/RTT Testing Console ── */}
+      {/* ── Agent controls & probe test ── */}
       <AgentControlPanel
         isConnected={isRemoteConnected}
         remoteDevice={remote}
         onRefresh={refreshDevices}
         onToast={showToast}
+        onProbeResult={setProbeVerified}
       />
 
-      {/* ── Client Onboarding & Configuration Guide ── */}
-      <div className="bg-surface-container-low border border-outline-variant rounded-lg p-4 shadow-xs">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
+      {/* ── Connect command (only when no agent) ── */}
+      {!isRemoteConnected && (
+        <div className="bg-surface-container-low border border-outline-variant rounded-lg p-4 shadow-xs">
+          <div className="flex items-center gap-2 mb-3">
             <span className="material-symbols-outlined text-outline text-[18px]">terminal</span>
             <span className="font-mono text-[13px] font-semibold text-on-surface">
-              {isRemoteConnected ? 'Connected Agent Configuration' : 'Connect Remote Agent (Computer A)'}
+              Run on the other computer
             </span>
           </div>
-          <span className="font-mono text-[11px] text-outline">
-            {isRemoteConnected ? 'Active Connection' : 'Setup Command'}
-          </span>
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 bg-surface-container-lowest border border-outline-variant rounded-lg p-2.5 font-mono text-[12px]">
+            <code className="text-primary truncate select-all">{clientCmd}</code>
+            <button
+              onClick={copyCommand}
+              className="shrink-0 px-3 py-1.5 rounded bg-surface-container hover:bg-surface-container-high border border-outline-variant text-on-surface text-[11px] font-semibold transition-all flex items-center justify-center gap-1.5 active:scale-95"
+            >
+              <span className="material-symbols-outlined text-[15px]">
+                {copiedCmd ? 'check' : 'content_copy'}
+              </span>
+              <span>{copiedCmd ? 'Copied' : 'Copy'}</span>
+            </button>
+          </div>
         </div>
+      )}
 
-        <p className="text-[13px] text-on-surface-variant mb-3 leading-relaxed">
-          {isRemoteConnected
-            ? `Computer A is currently transmitting continuous heartbeats and system telemetry to Computer B on port ${tcpServer.port || 5000}.`
-            : `To stream telemetry or launch attack packets from a second computer on your local network, run the client agent script on Computer A:`}
-        </p>
-
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 bg-surface-container-lowest border border-outline-variant rounded-lg p-2.5 font-mono text-[12px]">
-          <code className="text-primary truncate select-all">{clientCmd}</code>
-          <button
-            onClick={copyCommand}
-            className="shrink-0 px-3 py-1.5 rounded bg-surface-container hover:bg-surface-container-high border border-outline-variant text-on-surface text-[11px] font-semibold transition-all flex items-center justify-center gap-1.5 active:scale-95"
-          >
-            <span className="material-symbols-outlined text-[15px]">
-              {copiedCmd ? 'check' : 'content_copy'}
-            </span>
-            <span>{copiedCmd ? 'Copied' : 'Copy Command'}</span>
-          </button>
-        </div>
-      </div>
-
-      {/* ── Progressive Disclosure: Expandable Detailed Diagnostics ── */}
+      {/* ── Details ── */}
       <div className="bg-surface-container-low border border-outline-variant rounded-lg p-3.5 shadow-xs">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-[18px] text-primary">analytics</span>
+        <button
+          onClick={() => setShowDetails(!showDetails)}
+          className="w-full flex items-center justify-between"
+        >
+          <span className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-[18px] text-primary">info</span>
             <span className="font-mono text-[13px] font-semibold text-on-surface uppercase tracking-wider">
-              Device Diagnostics &amp; Telemetry Internals
+              Details
             </span>
-          </div>
-
-          <button
-            onClick={() => setShowDiagnostics(!showDiagnostics)}
-            className="flex items-center gap-1 text-primary hover:text-secondary font-mono text-[12px] font-medium transition-colors"
-          >
-            <span>{showDiagnostics ? 'Hide Raw Details' : 'Expand Raw Details'}</span>
+          </span>
+          <span className="flex items-center gap-1 text-primary hover:text-secondary font-mono text-[12px] font-medium transition-colors">
+            <span>{showDetails ? 'Hide' : 'Show'}</span>
             <span className="material-symbols-outlined text-[16px]">
-              {showDiagnostics ? 'expand_less' : 'expand_more'}
+              {showDetails ? 'expand_less' : 'expand_more'}
             </span>
-          </button>
-        </div>
+          </span>
+        </button>
 
-        {showDiagnostics && (
-          <div className="mt-3.5 pt-3.5 border-t border-outline-variant grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Computer A Raw Diagnostics */}
-            <div className="bg-surface-container-lowest rounded-lg border border-outline-variant/60 p-3.5 flex flex-col gap-2 font-mono text-[12px]">
-              <div className="flex items-center justify-between text-outline border-b border-outline-variant/40 pb-2">
-                <span className="font-semibold text-secondary uppercase tracking-wider">Agent Telemetry</span>
-                <span className="text-[11px]">Protocol v1.0</span>
+        {showDetails && (
+          <div className="mt-3.5 pt-3.5 border-t border-outline-variant grid grid-cols-1 md:grid-cols-2 gap-4 font-mono text-[12px]">
+            <div className="bg-surface-container-lowest rounded-lg border border-outline-variant/60 p-3.5 space-y-2">
+              <div className="text-secondary font-semibold uppercase tracking-wider border-b border-outline-variant/40 pb-2">
+                Agent
               </div>
-              <div className="py-1 flex justify-between">
-                <span className="text-outline">Heartbeat Sequence:</span>
-                <span className="text-on-surface">{remote.heartbeat_seq != null ? `#${remote.heartbeat_seq}` : '—'}</span>
+              <div className="flex justify-between">
+                <span className="text-outline">Heartbeat sequence</span>
+                <span className="text-on-surface">{seqText}</span>
               </div>
-              <div className="py-1 flex justify-between border-t border-outline-variant/30">
-                <span className="text-outline">Last Heartbeat Time:</span>
+              <div className="flex justify-between">
+                <span className="text-outline">Last heartbeat</span>
                 <span className="text-on-surface">{remote.last_heartbeat || '—'}</span>
               </div>
-              <div className="py-1 flex justify-between border-t border-outline-variant/30">
-                <span className="text-outline">Connected At:</span>
-                <span className="text-on-surface-variant">{remote.connected_at || '—'}</span>
+              <div className="flex justify-between">
+                <span className="text-outline">Connected at</span>
+                <span className="text-on-surface">{remote.connected_since || '—'}</span>
               </div>
             </div>
 
-            {/* Computer B Raw Diagnostics */}
-            <div className="bg-surface-container-lowest rounded-lg border border-outline-variant/60 p-3.5 flex flex-col gap-2 font-mono text-[12px]">
-              <div className="flex items-center justify-between text-outline border-b border-outline-variant/40 pb-2">
-                <span className="font-semibold text-primary uppercase tracking-wider">NIDS Server Engine</span>
-                <span className="text-[11px]">FastAPI + Scapy</span>
+            <div className="bg-surface-container-lowest rounded-lg border border-outline-variant/60 p-3.5 space-y-2">
+              <div className="text-primary font-semibold uppercase tracking-wider border-b border-outline-variant/40 pb-2">
+                Server · FastAPI + TShark
               </div>
-              <div className="py-1 flex justify-between">
-                <span className="text-outline">TCP Listener Status:</span>
-                <span className="text-emerald-300 font-semibold">
-                  {tcpServer.running ? `LISTENING (: ${tcpServer.port})` : 'STANDBY'}
+              <div className="flex justify-between">
+                <span className="text-outline">TCP listener</span>
+                <span className={tcpServer.running ? 'text-emerald-300 font-semibold' : 'text-outline'}>
+                  {tcpServer.running ? `LISTENING (${tcpServer.host}:${serverPort})` : 'STANDBY'}
                 </span>
               </div>
-              <div className="py-1 flex justify-between border-t border-outline-variant/30">
-                <span className="text-outline">Packet Capture Engine:</span>
+              <div className="flex justify-between">
+                <span className="text-outline">Ports</span>
+                <span className="text-on-surface">
+                  TCP {serverPort} · API {status?.api_server?.port ?? 8000}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-outline">Packet capture</span>
                 <span className={status?.packet_capture?.running ? 'text-emerald-300' : 'text-outline'}>
-                  {status?.packet_capture?.running ? 'RUNNING' : 'STOPPED'}
+                  {status?.packet_capture?.running ? 'TShark live' : 'Synthetic mode'}
                 </span>
               </div>
-              <div className="py-1 flex justify-between border-t border-outline-variant/30">
-                <span className="text-outline">System Engine Uptime:</span>
+              <div className="flex justify-between">
+                <span className="text-outline">Uptime</span>
                 <span className="text-on-surface-variant">
                   {status?.uptime_seconds ? `${Math.floor(status.uptime_seconds)}s` : '0s'}
                 </span>

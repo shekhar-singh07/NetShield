@@ -1,7 +1,5 @@
 /**
- * SecurityPage — Threat Intelligence, Event Investigation & Simulation Studio
- * Ownership: Security event queue, alert investigation, attack simulation studio, and advanced detection diagnostics.
- * Employs progressive disclosure for ML model internals, Gini weights, and signature rules.
+ * SecurityPage — simulations, custom lab, ML diagnostics, event queue.
  */
 import { useState, useEffect, useCallback } from 'react';
 import { fetchStatus, fetchEvents, fetchModelInfo } from '../api';
@@ -10,12 +8,15 @@ import SecurityEventTable from '../components/SecurityEventTable';
 import SimulationPanel from '../components/SimulationPanel';
 import CustomTrafficLab from '../components/CustomTrafficLab';
 
+const eventKey = (e) => `${e.timestamp}|${e.type}|${e.source_ip}`;
+
 export default function SecurityPage({ backendConnected }) {
   const [status, setStatus] = useState(null);
   const [eventsData, setEventsData] = useState({ events: [], total: 0 });
   const [modelInfo, setModelInfo] = useState(null);
   const [toastMsg, setToastMsg] = useState(null);
-  const [showAdvancedDiagnostics, setShowAdvancedDiagnostics] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [simulatedKeys, setSimulatedKeys] = useState(() => new Set());
 
   const showToast = useCallback((msg) => {
     setToastMsg(msg);
@@ -35,6 +36,15 @@ export default function SecurityPage({ backendConnected }) {
     } catch {
       // Backend error failover
     }
+  }, []);
+
+  const markSimulated = useCallback((list) => {
+    if (!Array.isArray(list) || list.length === 0) return;
+    setSimulatedKeys((prev) => {
+      const next = new Set(prev);
+      list.forEach((e) => next.add(eventKey(e)));
+      return next;
+    });
   }, []);
 
   useEffect(() => {
@@ -74,11 +84,34 @@ export default function SecurityPage({ backendConnected }) {
   const counts = status?.counts || { normal: 0, suspicious: 0 };
   const allEvents = eventsData.events || [];
   const importances = modelInfo?.feature_importances || {};
-  const rules = detection.rules || [
-    'PORT_SCAN_LIKE: Unique dst ports threshold',
-    'TRAFFIC_SPIKE: High volumetric packet rate',
-    'CONNECTION_BURST: Rapid SYN count per source',
-  ];
+  const rules = detection.rules || [];
+  const modelName = modelInfo?.name || detection.ml_model_name || 'RandomForest-NIDS';
+  const accuracy =
+    modelInfo?.accuracy != null ? `${(modelInfo.accuracy * 100).toFixed(0)}%` : null;
+
+  let banner;
+  if (!isEngineRunning) {
+    banner = {
+      tone: 'bg-amber-500/10 border-amber-500/30 text-amber-400',
+      icon: 'hourglass_top',
+      text: 'Detection engine on standby.',
+      next: 'Next: run a simulation below.',
+    };
+  } else if (counts.suspicious > 0) {
+    banner = {
+      tone: 'bg-error-container/20 border-error/40 text-error',
+      icon: 'warning',
+      text: `${counts.suspicious} alert${counts.suspicious === 1 ? '' : 's'} recorded`,
+      next: 'Next: open Details on an alert.',
+    };
+  } else {
+    banner = {
+      tone: 'bg-secondary/10 border-secondary/30 text-secondary',
+      icon: 'check_circle',
+      text: 'Detection running · no threats',
+      next: 'Next: run a simulation below.',
+    };
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -90,90 +123,85 @@ export default function SecurityPage({ backendConnected }) {
         </div>
       )}
 
-      {/* ── Attack Simulation & Testbed Studio (Primary Home) ── */}
+      {/* ── Status banner ── */}
+      <div className={`flex items-start gap-2.5 rounded-lg border p-3.5 ${banner.tone}`}>
+        <span className="material-symbols-outlined text-[20px] leading-none">{banner.icon}</span>
+        <div className="flex flex-col gap-1">
+          <span className="font-mono text-[13px] font-semibold">{banner.text}</span>
+          <span className="font-mono text-[12px] opacity-90">{banner.next}</span>
+        </div>
+      </div>
+
+      {/* ── Simulations ── */}
       <SimulationPanel
-        onSimulationComplete={() => {
+        onSimulationComplete={(res) => {
+          markSimulated(res?.recent_events);
           refreshAll();
-          showToast('Simulation vector executed. ML classifier and signature rules evaluated.');
+          showToast('Simulation done. Check alerts below.');
         }}
       />
 
-      {/* ── Phase 2: Custom Traffic Lab (Mode 1 Detection & Mode 2 Real Network) ── */}
+      {/* ── Custom lab ── */}
       <CustomTrafficLab
-        onTestComplete={refreshAll}
+        onTestComplete={(res) => {
+          markSimulated(res?.events_triggered);
+          refreshAll();
+        }}
         onToast={showToast}
       />
 
-      {/* ── Detection Engine Status Strip ── */}
+      {/* ── ML Diagnostics (collapsed by default) ── */}
       <div className="bg-surface-container-low border border-outline-variant rounded-lg p-3.5 shadow-xs">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Status indicator */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface-container border border-outline-variant font-mono text-[12px]">
-              <span className={`w-2 h-2 rounded-full ${isEngineRunning ? 'bg-emerald-400' : 'bg-outline'}`} />
-              <span className="font-semibold text-on-surface">
-                {isEngineRunning ? 'Detection Engine: Active' : 'Detection Engine: Standby'}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-secondary text-[18px]">psychology</span>
+              <span className="font-mono text-[13px] font-semibold text-on-surface uppercase tracking-wider">
+                ML Diagnostics
               </span>
-            </div>
-
-            {/* Architecture pill */}
-            <div className="font-mono text-[12px] text-on-surface-variant flex items-center gap-1.5">
-              <span className="text-outline">Mode:</span>
-              <span className="text-on-surface font-semibold">{detection.mode || 'Hybrid (Rules + ML)'}</span>
-            </div>
-
-            {/* Model pill */}
-            <div className="font-mono text-[12px] text-on-surface-variant flex items-center gap-1.5">
-              <span className="text-outline">Model:</span>
-              <span className="text-secondary font-semibold">
-                {detection.ml_model_loaded ? detection.ml_model_name : 'Rule-Based Fallback'}
-              </span>
-              <span className="text-emerald-400 font-mono text-[11px] bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/20">
-                {modelInfo?.accuracy ? `${(modelInfo.accuracy * 100).toFixed(1)}% Acc` : '99.4% Acc'}
-              </span>
-            </div>
+            </span>
+            <span className="font-mono text-[12px] text-on-surface-variant">{modelName}</span>
           </div>
 
-          {/* Progressive disclosure toggle */}
           <button
-            onClick={() => setShowAdvancedDiagnostics(!showAdvancedDiagnostics)}
-            className="flex items-center gap-1.5 text-primary hover:text-secondary font-mono text-[12px] font-medium transition-colors"
+            onClick={() => setShowDiagnostics(!showDiagnostics)}
+            className="flex items-center gap-1 text-primary hover:text-secondary font-mono text-[12px] font-medium transition-colors"
           >
-            <span>{showAdvancedDiagnostics ? 'Hide ML Diagnostics & Signatures' : 'View ML Diagnostics & Signatures'}</span>
+            <span>{showDiagnostics ? 'Hide' : 'Show'}</span>
             <span className="material-symbols-outlined text-[16px]">
-              {showAdvancedDiagnostics ? 'expand_less' : 'expand_more'}
+              {showDiagnostics ? 'expand_less' : 'expand_more'}
             </span>
           </button>
         </div>
 
-        {/* ── Progressive Disclosure: Advanced Diagnostics Panel ── */}
-        {showAdvancedDiagnostics && (
+        {showDiagnostics && (
           <div className="mt-3.5 pt-3.5 border-t border-outline-variant grid grid-cols-1 lg:grid-cols-2 gap-3.5">
-            {/* ML Architecture & Feature Importances */}
+            {/* Feature importances */}
             <div className="bg-surface-container-lowest p-3.5 rounded-lg border border-outline-variant/60 flex flex-col gap-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-secondary text-[18px]">psychology</span>
-                  <span className="text-[13px] font-semibold text-on-surface font-mono uppercase tracking-wider">
-                    RandomForest Diagnostics
-                  </span>
-                </div>
-                <span className="text-[11px] font-mono text-outline">60 Estimator Trees</span>
+              <div className="flex items-center justify-between font-mono text-[12px]">
+                <span className="text-outline">Engine</span>
+                <span className={isEngineRunning ? 'text-emerald-300' : 'text-outline'}>
+                  {isEngineRunning ? 'Running' : 'Standby'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between font-mono text-[12px]">
+                <span className="text-outline">Mode</span>
+                <span className="text-on-surface">{detection.mode || 'Hybrid (Rules + ML)'}</span>
+              </div>
+              <div className="flex items-center justify-between font-mono text-[12px]">
+                <span className="text-outline">Classes</span>
+                <span className="text-secondary text-right">
+                  {(modelInfo?.classes || []).join(', ') || '—'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between font-mono text-[12px]">
+                <span className="text-outline">Trees</span>
+                <span className="text-on-surface">{modelInfo?.estimators ?? '—'}</span>
               </div>
 
-              <div className="text-[12px] font-mono flex flex-col gap-1 text-on-surface-variant">
-                <div className="flex justify-between">
-                  <span className="text-outline">Target Classification Classes:</span>
-                  <span className="text-secondary font-medium">
-                    {(modelInfo?.classes || ['NORMAL', 'PORT_SCAN', 'TRAFFIC_SPIKE', 'SYN_BURST']).join(', ')}
-                  </span>
-                </div>
-              </div>
-
-              {/* Gini Feature Importance Bars */}
               <div className="flex flex-col gap-2 mt-1">
                 <span className="font-mono text-[11px] uppercase text-outline font-semibold">
-                  Feature Importance Weights (Gini Metric):
+                  Feature importances
                 </span>
                 {Object.entries(importances).length > 0 ? (
                   Object.entries(importances).map(([fname, weight]) => (
@@ -191,21 +219,16 @@ export default function SecurityPage({ backendConnected }) {
                     </div>
                   ))
                 ) : (
-                  <div className="text-[11px] font-mono text-outline">Loading feature importances...</div>
+                  <div className="text-[11px] font-mono text-outline">—</div>
                 )}
               </div>
             </div>
 
-            {/* Heuristic Signature Rules & Stats */}
+            {/* Signature rules */}
             <div className="bg-surface-container-lowest p-3.5 rounded-lg border border-outline-variant/60 flex flex-col gap-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-primary text-[18px]">rule</span>
-                  <span className="text-[13px] font-semibold text-on-surface font-mono uppercase tracking-wider">
-                    Active Detection Signatures
-                  </span>
-                </div>
-                <span className="text-[11px] font-mono text-outline">{rules.length} Rules Active</span>
+              <div className="flex items-center justify-between font-mono text-[12px]">
+                <span className="text-outline">Active signatures</span>
+                <span className="text-on-surface">{rules.length}</span>
               </div>
 
               <div className="flex flex-col gap-2">
@@ -221,11 +244,11 @@ export default function SecurityPage({ backendConnected }) {
               </div>
 
               <div className="mt-auto pt-2 border-t border-outline-variant/40 flex items-center justify-between font-mono text-[12px]">
-                <span className="text-outline">Benign Packets Evaluated:</span>
+                <span className="text-outline">Benign packets</span>
                 <span className="text-emerald-300 font-semibold">{counts.normal.toLocaleString()}</span>
               </div>
               <div className="flex items-center justify-between font-mono text-[12px]">
-                <span className="text-outline">Security Incidents Triggered:</span>
+                <span className="text-outline">Incidents</span>
                 <span className={counts.suspicious > 0 ? 'text-error font-semibold' : 'text-on-surface'}>
                   {counts.suspicious.toLocaleString()}
                 </span>
@@ -235,13 +258,14 @@ export default function SecurityPage({ backendConnected }) {
         )}
       </div>
 
-      {/* ── Security Events Queue & Investigation Inspector (Primary Work Surface) ── */}
+      {/* ── Security event queue ── */}
       <SecurityEventTable
         events={allEvents}
+        simulatedKeys={simulatedKeys}
         onRefresh={refreshAll}
         onToast={showToast}
         pageSize={12}
-        title="Security Event Queue & Incident Inspector"
+        title="Security Events"
       />
     </div>
   );

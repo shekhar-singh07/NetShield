@@ -1,12 +1,8 @@
 /**
- * OverviewPage — Main System Overview Dashboard
- * Ownership: System health, important metrics, setup warnings, and a short recent-alert summary.
- * Re-routes full traffic visualization to /monitoring, attack simulation & full queue to /security,
- * and detailed topology to /devices.
+ * OverviewPage — system health, metrics, protocols, recent alerts.
  */
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { fetchStatus, fetchMetrics, fetchEvents, fetchDevices } from '../api';
+import { fetchStatus, fetchMetrics, fetchEvents, fetchDevices, fetchModelInfo } from '../api';
 
 const SEVERITY_STYLES = {
   high: {
@@ -31,6 +27,7 @@ export default function OverviewPage({ backendConnected }) {
   const [devices, setDevices] = useState(null);
   const [metrics, setMetrics] = useState(null);
   const [events, setEvents] = useState([]);
+  const [modelInfo, setModelInfo] = useState(null);
 
   useEffect(() => {
     if (!backendConnected) return;
@@ -62,6 +59,21 @@ export default function OverviewPage({ backendConnected }) {
     };
   }, [backendConnected]);
 
+  useEffect(() => {
+    if (!backendConnected) return;
+    let active = true;
+    fetchModelInfo()
+      .then((m) => {
+        if (active) setModelInfo(m);
+      })
+      .catch(() => {
+        // Model info unavailable
+      });
+    return () => {
+      active = false;
+    };
+  }, [backendConnected]);
+
   if (!backendConnected) {
     return <DisconnectedBanner />;
   }
@@ -69,41 +81,53 @@ export default function OverviewPage({ backendConnected }) {
   const remote = devices?.remote || status?.remote_device || {};
   const isRemoteConnected = remote.status === 'connected';
   const captureAvail = status?.packet_capture?.available;
+  const captureRunning = status?.packet_capture?.running;
   const isMonitoring = status?.monitoring || false;
-  const detectionMode = status?.detection?.mode || 'Hybrid (Rules + ML)';
+  const detectionRunning = status?.detection?.running;
   const counts = status?.counts || { normal: 0, suspicious: 0 };
   const protocols = metrics?.protocols || {};
+  const threats = counts.suspicious;
+
+  const modelName = modelInfo?.name || status?.detection?.ml_model_name || 'RandomForest-NIDS';
+  const accuracy =
+    modelInfo?.accuracy != null ? `${(modelInfo.accuracy * 100).toFixed(0)}% accuracy` : null;
+
+  let banner;
+  if (threats > 0) {
+    banner = {
+      tone: 'bg-error-container/20 border-error/40 text-error',
+      icon: 'warning',
+      text: `${threats} threat${threats === 1 ? '' : 's'} flagged this session`,
+      next: 'Next: open Security to review alerts.',
+    };
+  } else if (!isRemoteConnected) {
+    banner = {
+      tone: 'bg-amber-500/10 border-amber-500/30 text-amber-400',
+      icon: 'hourglass_top',
+      text: 'Waiting for agent.',
+      next: 'Next: open Devices and run the command.',
+    };
+  } else {
+    banner = {
+      tone: 'bg-secondary/10 border-secondary/30 text-secondary',
+      icon: 'check_circle',
+      text: `All clear · agent connected${remote.rtt_ms != null ? ` · RTT ${remote.rtt_ms} ms` : ''}`,
+      next: 'Next: run a simulation on Security.',
+    };
+  }
 
   return (
     <div className="flex flex-col gap-4">
-      {/* ── System Status & Setup Notices ── */}
-      {!captureAvail && (
-        <div className="bg-surface-container-low border border-outline-variant/80 rounded-lg p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
-          <div className="flex items-start gap-3">
-            <span className="material-symbols-outlined text-tertiary text-[22px] mt-0.5">info</span>
-            <div>
-              <div className="text-[14px] font-semibold text-on-surface flex items-center gap-2">
-                <span>Packet Capture Mode: Socket Listener &amp; Synthetic Testbed</span>
-                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-tertiary-container/30 text-tertiary-fixed-dim border border-tertiary-container/40 font-medium">
-                  PORT 5000
-                </span>
-              </div>
-              <p className="text-[13px] text-on-surface-variant mt-0.5 leading-relaxed">
-                Local TShark binary is not installed on this host. NetShield is monitoring incoming TCP stream sockets on port 5000 and accepting attack simulations.
-              </p>
-            </div>
-          </div>
-          <Link
-            to="/security"
-            className="shrink-0 px-3 py-1.5 rounded bg-surface-container border border-outline-variant hover:bg-surface-container-high text-primary font-mono text-[12px] font-medium transition-colors flex items-center gap-1"
-          >
-            <span>Launch Simulation</span>
-            <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
-          </Link>
+      {/* ── Status banner ── */}
+      <div className={`flex items-start gap-2.5 rounded-lg border p-3.5 ${banner.tone}`}>
+        <span className="material-symbols-outlined text-[20px] leading-none">{banner.icon}</span>
+        <div className="flex flex-col gap-1">
+          <span className="font-mono text-[13px] font-semibold">{banner.text}</span>
+          <span className="font-mono text-[12px] opacity-90">{banner.next}</span>
         </div>
-      )}
+      </div>
 
-      {/* ── High-Level Health & Connectivity Strip ── */}
+      {/* ── Health & connectivity strip ── */}
       <div className="bg-surface-container-low border border-outline-variant rounded-lg p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 shadow-xs">
         {/* Computer B (Server) */}
         <div className="flex items-center justify-between p-2 rounded bg-surface-container-lowest border border-outline-variant/50">
@@ -112,9 +136,9 @@ export default function OverviewPage({ backendConnected }) {
             <div className="min-w-0">
               <div className="text-[11px] font-mono uppercase tracking-wider text-outline">Computer B (Server)</div>
               <div className="text-[13px] font-medium text-on-surface truncate">
-                {status?.hostname || 'NIDS Core Host'}
+                {status?.hostname || '—'}
               </div>
-              <div className="text-[11px] font-mono text-outline">{status?.ip || '127.0.0.1'}</div>
+              <div className="text-[11px] font-mono text-outline">{status?.ip || '—'}</div>
             </div>
           </div>
           <span className="inline-flex items-center gap-1 font-mono text-[11px] font-medium text-emerald-300 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
@@ -135,7 +159,7 @@ export default function OverviewPage({ backendConnected }) {
                 {remote.hostname || (isRemoteConnected ? 'Remote Client' : 'Not Connected')}
               </div>
               <div className="text-[11px] font-mono text-outline">
-                {isRemoteConnected ? `${remote.ip}:${remote.port}` : 'Waiting on :5000'}
+                {isRemoteConnected ? remote.ip || '—' : 'Waiting on :5000'}
               </div>
             </div>
           </div>
@@ -152,7 +176,7 @@ export default function OverviewPage({ backendConnected }) {
         {/* Detection Engine */}
         <div className="flex items-center justify-between p-2 rounded bg-surface-container-lowest border border-outline-variant/50">
           <div className="flex items-center gap-2.5 min-w-0">
-            <span className={`material-symbols-outlined text-[20px] ${isMonitoring ? 'text-emerald-400 animate-pulse' : 'text-primary'}`}>
+            <span className={`material-symbols-outlined text-[20px] ${detectionRunning ? 'text-emerald-400' : 'text-primary'}`}>
               radar
             </span>
             <div className="min-w-0">
@@ -166,53 +190,45 @@ export default function OverviewPage({ backendConnected }) {
             </div>
           </div>
           <span className={`inline-flex items-center gap-1 font-mono text-[11px] font-medium px-2 py-0.5 rounded border ${
-            isMonitoring
+            detectionRunning
               ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30'
               : 'text-outline bg-surface-container border-outline-variant'
           }`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${isMonitoring ? 'bg-emerald-400' : 'bg-outline'}`} />
-            {isMonitoring ? 'Active' : 'Ready'}
+            <span className={`w-1.5 h-1.5 rounded-full ${detectionRunning ? 'bg-emerald-400' : 'bg-outline'}`} />
+            {detectionRunning ? 'Running' : 'Ready'}
           </span>
         </div>
 
-        {/* Packet Capture Status */}
+        {/* Packet Capture */}
         <div className="flex items-center justify-between p-2 rounded bg-surface-container-lowest border border-outline-variant/50">
           <div className="flex items-center gap-2.5 min-w-0">
             <span className={`material-symbols-outlined text-[20px] ${
-              status?.packet_capture?.running
-                ? 'text-emerald-400'
-                : captureAvail
-                ? 'text-primary'
-                : 'text-tertiary'
+              captureRunning ? 'text-emerald-400' : captureAvail ? 'text-primary' : 'text-tertiary'
             }`}>
-              {status?.packet_capture?.running ? 'sensors' : 'signal_cellular_alt'}
+              {captureRunning ? 'sensors' : 'signal_cellular_alt'}
             </span>
             <div className="min-w-0">
               <div className="text-[11px] font-mono uppercase tracking-wider text-outline">Packet Capture</div>
               <div className="text-[13px] font-medium text-on-surface truncate">
-                {status?.packet_capture?.interface || (captureAvail ? 'Local Interface' : 'Synthetic Mode')}
+                {captureRunning ? status?.packet_capture?.interface || 'TShark' : 'Synthetic mode'}
               </div>
               <div className="text-[11px] font-mono text-outline">
-                {captureAvail ? 'TShark Sniffer' : 'Port 5000 Listener'}
+                {captureAvail ? 'TShark available' : 'No TShark installed'}
               </div>
             </div>
           </div>
           <span className={`inline-flex items-center gap-1 font-mono text-[11px] font-medium px-2 py-0.5 rounded border ${
-            status?.packet_capture?.running
+            captureRunning
               ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30'
-              : captureAvail
-              ? 'text-outline bg-surface-container border-outline-variant'
               : 'text-tertiary-fixed-dim bg-tertiary-container/20 border-tertiary-container/30'
           }`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${
-              status?.packet_capture?.running ? 'bg-emerald-400' : captureAvail ? 'bg-outline' : 'bg-tertiary'
-            }`} />
-            {status?.packet_capture?.running ? 'Capturing' : captureAvail ? 'Standby' : 'Fallback'}
+            <span className={`w-1.5 h-1.5 rounded-full ${captureRunning ? 'bg-emerald-400' : 'bg-tertiary'}`} />
+            {captureRunning ? 'Live' : 'Synthetic'}
           </span>
         </div>
       </div>
 
-      {/* ── Important Metrics Strip (13-14px labels, readable typography) ── */}
+      {/* ── Metric cards ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <MetricCard
           label="Total Packets Processed"
@@ -248,120 +264,48 @@ export default function OverviewPage({ backendConnected }) {
         />
       </div>
 
-      {/* ── Operational Overview & Page Summaries (2 Columns) ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Card 1: Traffic & Monitoring Summary */}
-        <div className="bg-surface-container-low border border-outline-variant rounded-lg flex flex-col shadow-xs">
-          <div className="h-10 px-3.5 flex items-center justify-between border-b border-outline-variant bg-surface-container-lowest rounded-t-lg">
-            <div className="flex items-center gap-2">
-              <span className="material-symbols-outlined text-[18px] text-primary">monitoring</span>
-              <span className="font-mono text-[12px] font-semibold text-on-surface uppercase tracking-wider">
-                Live Traffic Status
-              </span>
-            </div>
-            <Link
-              to="/monitoring"
-              className="text-primary hover:text-secondary text-[12px] font-mono font-medium flex items-center gap-1 transition-colors"
-            >
-              <span>Live Console</span>
-              <span className="material-symbols-outlined text-[15px]">arrow_forward</span>
-            </Link>
-          </div>
-
-          <div className="p-4 flex flex-col gap-3">
-            <div className="grid grid-cols-3 gap-2 bg-surface-container-lowest p-3 rounded border border-outline-variant/50">
-              <div className="flex flex-col">
-                <span className="text-outline text-[11px] font-mono">TCP Share</span>
-                <span className="text-[16px] font-semibold text-primary font-mono mt-0.5">
-                  {protocols.tcp ?? 0}%
-                </span>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-outline text-[11px] font-mono">UDP Share</span>
-                <span className="text-[16px] font-semibold text-secondary font-mono mt-0.5">
-                  {protocols.udp ?? 0}%
-                </span>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-outline text-[11px] font-mono">ICMP / Other</span>
-                <span className="text-[16px] font-semibold text-tertiary-fixed-dim font-mono mt-0.5">
-                  {protocols.icmp ?? 0}%
-                </span>
-              </div>
-            </div>
-
-            <div className="text-[13px] text-on-surface-variant flex items-center justify-between pt-1">
-              <span>Sniffer State:</span>
-              <span className="font-mono font-medium text-on-surface">
-                {isMonitoring ? 'Continuous Packet Capture Active' : 'Standby (Ready to Sniff)'}
-              </span>
-            </div>
-            <div className="text-[13px] text-on-surface-variant flex items-center justify-between border-t border-outline-variant/40 pt-2">
-              <span>Network Interface:</span>
-              <span className="font-mono text-on-surface">
-                {status?.packet_capture?.interface || '(synthetic listener)'}
-              </span>
-            </div>
-            <div className="text-[13px] text-on-surface-variant flex items-center justify-between border-t border-outline-variant/40 pt-2">
-              <span>Normal Flows Logged:</span>
-              <span className="font-mono text-emerald-300 font-semibold">
-                {counts.normal.toLocaleString()} pkts
-              </span>
-            </div>
-          </div>
+      {/* ── Protocols & model ── */}
+      <div className="bg-surface-container-low border border-outline-variant rounded-lg flex flex-col shadow-xs">
+        <div className="h-10 px-3.5 flex items-center gap-2 border-b border-outline-variant bg-surface-container-lowest rounded-t-lg">
+          <span className="material-symbols-outlined text-[18px] text-primary">monitoring</span>
+          <span className="font-mono text-[12px] font-semibold text-on-surface uppercase tracking-wider">
+            Protocols
+          </span>
         </div>
 
-        {/* Card 2: Security & Detection Engine Summary */}
-        <div className="bg-surface-container-low border border-outline-variant rounded-lg flex flex-col shadow-xs">
-          <div className="h-10 px-3.5 flex items-center justify-between border-b border-outline-variant bg-surface-container-lowest rounded-t-lg">
-            <div className="flex items-center gap-2">
-              <span className="material-symbols-outlined text-[18px] text-secondary">shield</span>
-              <span className="font-mono text-[12px] font-semibold text-on-surface uppercase tracking-wider">
-                Detection &amp; ML Architecture
+        <div className="p-4 flex flex-col gap-3">
+          <div className="grid grid-cols-3 gap-2 bg-surface-container-lowest p-3 rounded border border-outline-variant/50">
+            <div className="flex flex-col">
+              <span className="text-outline text-[11px] font-mono">TCP Share</span>
+              <span className="text-[16px] font-semibold text-primary font-mono mt-0.5">
+                {protocols.tcp ?? 0}%
               </span>
             </div>
-            <Link
-              to="/security"
-              className="text-primary hover:text-secondary text-[12px] font-mono font-medium flex items-center gap-1 transition-colors"
-            >
-              <span>Security Center</span>
-              <span className="material-symbols-outlined text-[15px]">arrow_forward</span>
-            </Link>
+            <div className="flex flex-col">
+              <span className="text-outline text-[11px] font-mono">UDP Share</span>
+              <span className="text-[16px] font-semibold text-secondary font-mono mt-0.5">
+                {protocols.udp ?? 0}%
+              </span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-outline text-[11px] font-mono">ICMP / Other</span>
+              <span className="text-[16px] font-semibold text-tertiary-fixed-dim font-mono mt-0.5">
+                {protocols.icmp ?? 0}%
+              </span>
+            </div>
           </div>
 
-          <div className="p-4 flex flex-col gap-3">
-            <div className="grid grid-cols-2 gap-2 bg-surface-container-lowest p-3 rounded border border-outline-variant/50">
-              <div>
-                <span className="text-outline text-[11px] font-mono">Classifier Model</span>
-                <div className="text-[14px] font-semibold text-secondary font-mono mt-0.5">
-                  RandomForest (60 Trees)
-                </div>
-              </div>
-              <div>
-                <span className="text-outline text-[11px] font-mono">Validated Accuracy</span>
-                <div className="text-[14px] font-semibold text-emerald-300 font-mono mt-0.5">
-                  99.4% F1-Score
-                </div>
-              </div>
-            </div>
-
-            <div className="text-[13px] text-on-surface-variant flex items-center justify-between pt-1">
-              <span>Detection Framework:</span>
-              <span className="font-mono font-medium text-on-surface">{detectionMode}</span>
-            </div>
-            <div className="text-[13px] text-on-surface-variant flex items-center justify-between border-t border-outline-variant/40 pt-2">
-              <span>Active Heuristic Signatures:</span>
-              <span className="font-mono text-on-surface">Port Scan, Spike, SYN Burst</span>
-            </div>
-            <div className="text-[13px] text-on-surface-variant flex items-center justify-between border-t border-outline-variant/40 pt-2">
-              <span>Attack Simulation Studio:</span>
-              <span className="font-mono text-primary">Available on Security Page</span>
-            </div>
+          <div className="text-[13px] text-on-surface-variant flex items-center justify-between pt-1">
+            <span className="text-outline font-mono text-[12px]">Model</span>
+            <span className="font-mono text-on-surface">
+              {modelName}
+              {accuracy ? ` · ${accuracy}` : ''}
+            </span>
           </div>
         </div>
       </div>
 
-      {/* ── Recent Security Alerts Summary ── */}
+      {/* ── Recent security alerts ── */}
       <div className="bg-surface-container-low border border-outline-variant rounded-lg flex flex-col shadow-xs overflow-hidden">
         <div className="h-10 px-3.5 flex items-center justify-between border-b border-outline-variant bg-surface-container-lowest">
           <div className="flex items-center gap-2">
@@ -370,17 +314,9 @@ export default function OverviewPage({ backendConnected }) {
               Recent Security Alerts
             </span>
             <span className="px-2 py-0.5 rounded bg-surface-container text-on-surface-variant font-mono text-[11px] border border-outline-variant">
-              Latest {events.slice(0, 3).length} of {events.length}
+              Latest {Math.min(5, events.length)} of {events.length}
             </span>
           </div>
-
-          <Link
-            to="/security"
-            className="text-primary hover:text-secondary text-[12px] font-mono font-medium flex items-center gap-1 transition-colors"
-          >
-            <span>Investigate All Alerts</span>
-            <span className="material-symbols-outlined text-[15px]">arrow_forward</span>
-          </Link>
         </div>
 
         {events.length > 0 ? (
@@ -398,7 +334,7 @@ export default function OverviewPage({ backendConnected }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-outline-variant/60 font-mono text-[12px]">
-                {events.slice(0, 3).map((evt, idx) => {
+                {events.slice(0, 5).map((evt, idx) => {
                   const sevKey = (evt.severity || 'low').toLowerCase();
                   const sevCfg = SEVERITY_STYLES[sevKey] || SEVERITY_STYLES.low;
                   const isML = (evt.type || '').startsWith('ML_');
@@ -445,24 +381,7 @@ export default function OverviewPage({ backendConnected }) {
         ) : (
           <div className="p-8 text-center flex flex-col items-center justify-center gap-2 text-outline">
             <span className="material-symbols-outlined text-[32px] text-outline/60">verified_user</span>
-            <div className="text-[13px] font-medium text-on-surface">
-              {isMonitoring
-                ? 'Monitoring is active — No threat events recorded in this session'
-                : 'Detection engine is currently in standby mode'}
-            </div>
-            <p className="text-[12px] text-on-surface-variant max-w-md">
-              {isMonitoring
-                ? 'All incoming traffic flows currently evaluate as benign.'
-                : 'To test intrusion detection rules and RandomForest classification, trigger an attack vector in the Security Studio.'}
-            </p>
-            <div className="mt-2 flex items-center gap-2">
-              <Link
-                to="/security"
-                className="px-3 py-1.5 rounded bg-primary/20 border border-primary/40 text-primary font-mono text-[11px] font-semibold hover:bg-primary/30 transition-colors"
-              >
-                Go to Attack Simulation Studio
-              </Link>
-            </div>
+            <div className="text-[13px] font-medium text-on-surface">No threats recorded.</div>
           </div>
         )}
       </div>
