@@ -118,7 +118,7 @@ export default function AgentControlPanel({ isConnected, remoteDevice = {}, onRe
                 className="h-8 px-3.5 rounded-lg bg-primary/20 border border-primary/40 hover:bg-primary/30 text-primary font-mono text-[12px] font-semibold transition-all flex items-center gap-1.5 disabled:opacity-50"
               >
                 <span className="material-symbols-outlined text-[16px]">play_arrow</span>
-                <span>{connectLoading ? 'Connecting...' : 'Connect Test Agent'}</span>
+                <span>{connectLoading ? 'Connecting...' : 'Start Local Test Agent'}</span>
               </button>
             ) : (
               <button

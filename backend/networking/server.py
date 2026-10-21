@@ -170,8 +170,25 @@ class NetShieldServer:
             try:
                 client, addr = self._server_socket.accept()
                 logger.info(f"Connection from {addr[0]}:{addr[1]}")
-                self._client_socket = client
-                self._handle_client(client, addr)
+                with self._lock:
+                    previous_client = self._client_socket
+                if previous_client:
+                    logger.info("Replacing the existing agent connection with the new agent")
+                    try:
+                        previous_client.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+                    try:
+                        previous_client.close()
+                    except OSError:
+                        pass
+                with self._lock:
+                    self._client_socket = client
+                threading.Thread(
+                    target=self._handle_client,
+                    args=(client, addr),
+                    daemon=True,
+                ).start()
             except socket.timeout:
                 continue
             except OSError:
@@ -228,10 +245,11 @@ class NetShieldServer:
                 client.close()
             except Exception:
                 pass
-            self._client_socket = None
             with self._lock:
-                self.remote_device["status"] = "disconnected"
-                self.remote_device["hostname"] = None
+                if self._client_socket is client:
+                    self._client_socket = None
+                    self.remote_device["status"] = "disconnected"
+                    self.remote_device["hostname"] = None
             logger.info(f"Client {addr[0]}:{addr[1]} disconnected")
 
     def _process_message(self, client: socket.socket, msg: dict):

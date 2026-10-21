@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { connectAgent, fetchStatus } from '../api';
+import { fetchStatus } from '../api';
 import { setStoredRole } from '../roleStorage';
 
 function RoleCard({ icon, title, description, features, action, onClick }) {
@@ -127,29 +127,21 @@ export function AgentSetupPage({ backendConnected }) {
   const navigate = useNavigate();
   const [host, setHost] = useState('');
   const [port, setPort] = useState('5000');
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const command = `python agent/traffic_generator.py --server ${host.trim() || '<SERVER_IP>'} --port ${port || 5000}`;
 
-  const submit = async (event) => {
-    event.preventDefault();
-    setBusy(true);
-    setResult(null);
-    try {
-      const response = await connectAgent(host.trim(), Number(port));
-      setResult(response.success ? { ok: true, text: response.message } : { ok: false, text: response.error });
-    } catch (error) {
-      setResult({ ok: false, text: error.message || 'Connection request failed.' });
-    } finally {
-      setBusy(false);
-    }
+  const copyCommand = async () => {
+    await navigator.clipboard.writeText(command);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2200);
   };
 
   return (
     <SetupShell title="Connect this computer as an agent" onBack={() => navigate('/setup')}>
       <p className="text-sm leading-6 text-on-surface-variant">
-        Enter the server address on your LAN. NetShield will use the existing HELLO/HELLO_ACK handshake and 3-second heartbeat protocol.
+        The agent must run on the other computer. The browser cannot start a Python process, so launch the existing agent there using the command below. It will use the HELLO/HELLO_ACK handshake and 3-second heartbeat protocol.
       </p>
-      <form onSubmit={submit} className="mt-6 space-y-4">
+      <div className="mt-6 space-y-4">
         <label className="block text-sm text-on-surface">
           Server IP address or hostname
           <input required value={host} onChange={(event) => setHost(event.target.value)} placeholder="192.168.1.50 or nids-host" pattern="[A-Za-z0-9][A-Za-z0-9.-]*" className="mt-2 w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-on-surface outline-none focus:border-primary" />
@@ -158,13 +150,20 @@ export function AgentSetupPage({ backendConnected }) {
           TCP port
           <input required type="number" min="1" max="65535" value={port} onChange={(event) => setPort(event.target.value)} className="mt-2 w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-on-surface outline-none focus:border-primary" />
         </label>
-        {!backendConnected && <p className="text-sm text-error">The local backend is unavailable. Start it before connecting this agent.</p>}
-        {result && <p className={`rounded-lg border p-3 text-sm ${result.ok ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-error/30 bg-error-container/20 text-error'}`}>{result.text}</p>}
-        <button type="submit" disabled={busy || !backendConnected} className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-on-primary disabled:cursor-not-allowed disabled:opacity-60">
-          {busy ? 'Connecting…' : 'Connect Agent'}
-        </button>
-      </form>
-      {result?.ok && <button type="button" onClick={() => navigate('/devices')} className="mt-4 text-sm text-primary hover:underline">View connection health →</button>}
+        {!backendConnected && <p className="text-sm text-error">The local backend is unavailable. Start it on the server computer before launching the agent.</p>}
+        <div>
+          <div className="mb-2 text-xs uppercase tracking-wider text-outline">Run on the agent computer</div>
+          <code className="block overflow-x-auto rounded-lg border border-outline-variant bg-surface-container-lowest p-3 text-xs text-primary">{command}</code>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <button type="button" onClick={copyCommand} className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-on-primary">
+            {copied ? 'Copied' : 'Copy command'}
+          </button>
+          <button type="button" onClick={() => navigate('/devices')} className="rounded-lg border border-outline-variant px-4 py-2 text-sm text-on-surface-variant hover:border-primary/50 hover:text-on-surface">
+            Check connection status
+          </button>
+        </div>
+      </div>
     </SetupShell>
   );
 }
