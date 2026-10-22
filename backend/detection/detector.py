@@ -98,6 +98,8 @@ class DetectionEngine:
         all_features = self.feature_extractor.get_all_source_features()
 
         for features in all_features:
+            if features.get("recent_packets", 0) <= 0:
+                continue
             detected_types = set()
 
             # 1. Rule-based detection

@@ -28,11 +28,11 @@ print("   Host:", status.get("hostname"), "IP:", status.get("ip"))
 print("   Detection Mode:", status.get("detection", {}).get("mode"))
 
 print("\n2. Triggering Port Scan simulation...")
-res = post("/api/simulate/traffic?scenario=port_scan")
+res = post("/api/simulate/traffic?scenario=port_scan&source_ip=192.168.1.105")
 print("   Generated packets:", res.get("packets_generated"))
 
 print("\n3. Triggering Traffic Spike simulation...")
-res = post("/api/simulate/traffic?scenario=traffic_spike")
+res = post("/api/simulate/traffic?scenario=traffic_spike&source_ip=192.168.1.106")
 print("   Generated packets:", res.get("packets_generated"))
 
 time.sleep(1)
@@ -42,6 +42,10 @@ events = get("/api/events")
 print(f"   Total recorded events: {events.get('total')}")
 for evt in events.get("events", [])[:5]:
     print(f"   [{evt.get('severity')}] {evt.get('type')}: {evt.get('reason')}")
+event_types = {evt.get("type") for evt in events.get("events", [])}
+for expected_type in ("ML_PORT_SCAN", "ML_TRAFFIC_SPIKE"):
+    if expected_type not in event_types:
+        raise AssertionError(f"ML detector did not emit {expected_type} for simulated attack traffic")
 
 print("\n5. Checking GET /api/metrics...")
 metrics = get("/api/metrics")

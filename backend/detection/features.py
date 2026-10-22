@@ -54,7 +54,13 @@ class FeatureExtractor:
 
     def get_features_for_source(self, src_ip: str) -> dict:
         """Extract detection features for a specific source IP."""
-        now = time.time()
+        packet_timestamps = self._src_packets.get(src_ip, [])
+        latest_packet = max(packet_timestamps, default=0.0)
+        wall_clock = time.time()
+        if latest_packet and wall_clock - latest_packet <= self.window:
+            now = latest_packet
+        else:
+            now = wall_clock
         cutoff = now - self.window
         burst_cutoff = now - 2.0  # 2-second short window for bursts
 

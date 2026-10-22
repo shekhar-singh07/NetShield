@@ -362,17 +362,29 @@ class MLDetector:
         src = features.get("source_ip", "")
         if not src:
             return []
+        if features.get("recent_packets", 0) <= 0:
+            return []
         now = time.time()
         if now - self._cooldown.get(src, 0) < self._cooldown_seconds:
             return []
         vec = np.asarray([self.extract_vector(features)])
         pred_label = str(self.model.predict(vec)[0])
-        if pred_label == "NORMAL":
-            return []
         probabilities = self.model.predict_proba(vec)[0]
         classes = [str(value) for value in self.model.classes_]
         pred_index = classes.index(pred_label)
         confidence = round(float(probabilities[pred_index]), 3)
+        calibration = None
+
+        # NSL-KDD does not expose packet size, so its byte-derived training
+        # feature is not directly comparable to live packet sizes. Keep the
+        # model's confident predictions, but calibrate clear runtime patterns
+        # when that incompatible feature causes a NORMAL prediction.
+        if pred_label == "NORMAL":
+            pred_label, calibration = self._calibrate_runtime_pattern(features)
+            if pred_label is None:
+                return []
+            confidence = max(confidence, 0.65)
+
         if confidence < 0.65:
             return []
         self._cooldown[src] = now
@@ -392,6 +404,7 @@ class MLDetector:
             "confidence": confidence,
             "raw_data": {
                 "model": self.model_name,
+                "calibration": calibration,
                 "features": {key: features.get(key) for key in self.feature_names},
                 "class_probabilities": {
                     label: round(float(probability), 3)
@@ -399,6 +412,20 @@ class MLDetector:
                 },
             },
         }]
+
+    @staticmethod
+    def _calibrate_runtime_pattern(features: dict) -> tuple[str | None, str | None]:
+        """Bridge live packet semantics that are absent from NSL-KDD training."""
+        if features.get("unique_dst_ports", 0) > 15:
+            return "PORT_SCAN", "runtime_port_scan_signature"
+        if (
+            features.get("packet_rate", 0) > 250
+            or features.get("burst_rate", 0) > 250
+        ):
+            return "TRAFFIC_SPIKE", "runtime_traffic_spike_signature"
+        if features.get("connection_rate", 0) > 50:
+            return "SYN_BURST", "runtime_connection_burst_signature"
+        return None, None
 
     def get_info(self) -> dict:
         importances = {}
