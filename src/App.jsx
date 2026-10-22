@@ -5,6 +5,7 @@ import OverviewPage from './pages/OverviewPage';
 import MonitoringPage from './pages/MonitoringPage';
 import SecurityPage from './pages/SecurityPage';
 import DevicesPage from './pages/DevicesPage';
+import AgentPage from './pages/AgentPage';
 import RoleSetupPage, { AgentSetupPage, ServerSetupPage } from './pages/RoleSetupPage';
 import { clearStoredRole, getStoredRole } from './roleStorage';
 import { checkBackend } from './api';
@@ -42,6 +43,8 @@ export default function App() {
     setRole(null);
   };
 
+  const isAgent = role === 'agent';
+
   return (
     <BrowserRouter>
       <div className="min-h-screen bg-surface text-on-surface flex flex-col font-sans selection:bg-primary/20 selection:text-primary">
@@ -51,10 +54,10 @@ export default function App() {
             <Route path="/setup" element={<RoleSetupPage />} />
             <Route path="/server-setup" element={<ServerSetupPage backendConnected={backendConnected} />} />
             <Route path="/agent-setup" element={<AgentSetupPage backendConnected={backendConnected} />} />
-            <Route path="/" element={role ? <OverviewPage backendConnected={backendConnected} /> : <Navigate to="/setup" replace />} />
-            <Route path="/monitoring" element={role ? <MonitoringPage backendConnected={backendConnected} /> : <Navigate to="/setup" replace />} />
-            <Route path="/security" element={role ? <SecurityPage backendConnected={backendConnected} /> : <Navigate to="/setup" replace />} />
-            <Route path="/devices" element={role ? <DevicesPage backendConnected={backendConnected} /> : <Navigate to="/setup" replace />} />
+            <Route path="/" element={role ? (isAgent ? <AgentPage /> : <OverviewPage backendConnected={backendConnected} />) : <Navigate to="/setup" replace />} />
+            <Route path="/monitoring" element={role ? (isAgent ? <AgentPage /> : <MonitoringPage backendConnected={backendConnected} />) : <Navigate to="/setup" replace />} />
+            <Route path="/security" element={role ? (isAgent ? <AgentPage /> : <SecurityPage backendConnected={backendConnected} />) : <Navigate to="/setup" replace />} />
+            <Route path="/devices" element={role ? (isAgent ? <AgentPage /> : <DevicesPage backendConnected={backendConnected} />) : <Navigate to="/setup" replace />} />
             <Route path="*" element={<Navigate to={role ? '/' : '/setup'} replace />} />
           </Routes>
         </main>

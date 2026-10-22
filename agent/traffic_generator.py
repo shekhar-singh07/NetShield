@@ -10,6 +10,7 @@ Capabilities:
    - Connection Burst: Rapidly opens and closes TCP connections.
    - Normal Traffic: Periodic standard requests.
 3. Interactive CLI menu or scripted batch mode.
+4. Local Web UI: control page + JSON status API on http://127.0.0.1:7000.
 
 Usage:
     python agent/traffic_generator.py --server 192.168.1.10 --port 5000
@@ -21,6 +22,7 @@ import socket
 import argparse
 import threading
 import json
+from collections import deque
 
 try:
     import urllib.request
@@ -65,29 +67,112 @@ class NetShieldAgent:
         self.connected = False
         self.seq = 0
         self.last_rtt = None
+        self.status = "disconnected"  # connected | disconnected | retrying
+        self.events = deque(maxlen=50)
+        self._events_lock = threading.Lock()
+        self._hb_send_time = None
+        self._last_rx_time = time.time()
+        self._loop_thread = None
+
+    # ── Web UI / status API surface ──
+
+    def _log_event(self, event: str, detail: str = ""):
+        with self._events_lock:
+            self.events.append({
+                "time": time.strftime("%H:%M:%S"),
+                "event": event,
+                "detail": str(detail) if detail is not None else "",
+            })
+
+    def status_payload(self) -> dict:
+        with self._events_lock:
+            events = list(self.events)
+        return {
+            "connected": self.connected,
+            "status": self.status,
+            "server": self.host,
+            "port": self.port,
+            "heartbeat_count": self.seq,
+            "last_rtt_ms": self.last_rtt,
+            "recent_events": events,
+        }
+
+    # ── Connect / disconnect / send ──
 
     def start(self):
+        """Start the connection loop (auto-reconnects until stopped)."""
         self.running = True
-        t = threading.Thread(target=self._loop, daemon=True)
-        t.start()
+        if self._loop_thread and self._loop_thread.is_alive():
+            return
+        self._loop_thread = threading.Thread(target=self._loop, daemon=True)
+        self._loop_thread.start()
+
+    def connect(self):
+        """Web UI Connect button — (re)start the connection loop."""
+        self.start()
 
     def stop(self):
+        """Full stop: close socket and disable auto-reconnect."""
         self.running = False
-        if self.sock:
+        self._close_socket()
+        self.status = "disconnected"
+
+    def disconnect(self):
+        """Web UI Disconnect button — close socket, no auto-retry until connect()."""
+        self.stop()
+        self._log_event("disconnected", "disconnect requested")
+        print("[Agent] Disconnected by user")
+
+    def send_test_message(self) -> bool:
+        """Send one immediate heartbeat as a connectivity test (same frame format)."""
+        if not (self.connected and self.sock):
+            return False
+        self.seq += 1
+        self._hb_send_time = time.time()
+        hb = json.dumps({
+            "type": "heartbeat",
+            "hostname": socket.gethostname(),
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "sequence": self.seq,
+            "send_time": self._hb_send_time,
+        }) + "\n"
+        try:
+            self.sock.sendall(hb.encode())
+            self._log_event("heartbeat_sent", f"#{self.seq} (test)")
+            print(f"[Agent] Test heartbeat #{self.seq} sent")
+            return True
+        except OSError:
+            return False
+
+    # ── Connection machinery ──
+
+    def _close_socket(self):
+        sock = self.sock
+        self.sock = None
+        if sock:
             try:
-                self.sock.close()
+                sock.shutdown(socket.SHUT_RDWR)
             except Exception:
                 pass
+            try:
+                sock.close()
+            except Exception:
+                pass
+        self.connected = False
 
     def _loop(self):
         while self.running:
             try:
                 print(f"[Agent] Connecting to Computer B at {self.host}:{self.port}...")
+                self.status = "retrying"
                 self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self.sock.settimeout(5.0)
                 self.sock.connect((self.host, self.port))
                 self.connected = True
+                self.status = "connected"
+                self._last_rx_time = time.time()
                 print(f"[Agent] Connected to {self.host}:{self.port}")
+                self._log_event("connected", f"{self.host}:{self.port}")
 
                 # Send HELLO
                 hello = json.dumps({
@@ -97,56 +182,107 @@ class NetShieldAgent:
                 }) + "\n"
                 self.sock.sendall(hello.encode())
 
-                # Read HELLO ACK
-                ack = self._recv_line()
-                print(f"[Agent] Server ACK: {ack}")
+                # Receive loop in its own thread (acks, probes, disconnects)
+                rx = threading.Thread(target=self._receive_loop, args=(self.sock,), daemon=True)
+                rx.start()
 
                 # Heartbeat loop
                 while self.running and self.connected:
                     time.sleep(3.0)
+                    if not (self.running and self.connected):
+                        break
+                    if time.time() - self._last_rx_time > 10.0:
+                        print("[Agent] No heartbeat ACK, reconnecting...")
+                        self._close_socket()
+                        break
                     self.seq += 1
-                    send_t = time.time()
+                    self._hb_send_time = time.time()
                     hb = json.dumps({
                         "type": "heartbeat",
                         "hostname": socket.gethostname(),
                         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
                         "sequence": self.seq,
-                        "send_time": send_t,
+                        "send_time": self._hb_send_time,
                     }) + "\n"
-                    self.sock.sendall(hb.encode())
-
-                    reply = self._recv_line()
-                    if reply:
-                        self.last_rtt = round((time.time() - send_t) * 1000, 2)
-                        print(f"[Agent] Heartbeat #{self.seq} ACK (RTT: {self.last_rtt}ms)")
-                    else:
-                        print("[Agent] No heartbeat ACK, reconnecting...")
+                    try:
+                        self.sock.sendall(hb.encode())
+                        self._log_event("heartbeat_sent", f"#{self.seq}")
+                    except OSError:
                         break
+
+                if self.running and not self.connected:
+                    self.status = "retrying"
 
             except Exception as e:
                 print(f"[Agent] Connection error: {e}. Retrying in 4s...")
                 self.connected = False
+                self.status = "retrying"
+                self._log_event("disconnected", str(e))
                 time.sleep(4.0)
             finally:
-                if self.sock:
-                    try:
-                        self.sock.close()
-                    except Exception:
-                        pass
-                self.connected = False
+                self._close_socket()
 
-
-    def _recv_line(self):
+    def _receive_loop(self, sock):
+        """Read newline-delimited JSON; answer probes; track ACKs and closures."""
         buf = ""
-        while "\n" not in buf:
+        while self.running and self.connected:
             try:
-                chunk = self.sock.recv(1024)
-                if not chunk:
-                    return None
-                buf += chunk.decode("utf-8", errors="replace")
-            except socket.timeout:
-                return None
-        return buf.split("\n")[0].strip()
+                data = sock.recv(4096)
+            except OSError:
+                break
+            if not data:
+                break
+            self._last_rx_time = time.time()
+            buf += data.decode("utf-8", errors="replace")
+            while "\n" in buf:
+                line, buf = buf.split("\n", 1)
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                self._handle_server_message(sock, msg, line)
+        if self.connected:
+            print("[Agent] Connection closed by server.")
+            self._log_event("disconnected", "socket closed by server")
+            self.connected = False
+
+    def _handle_server_message(self, sock, msg: dict, raw: str):
+        msg_type = msg.get("type")
+
+        if msg_type == "hello_ack":
+            print(f"[Agent] Server ACK: {raw}")
+            self._log_event("hello_ack", msg.get("server_hostname", ""))
+
+        elif msg_type == "heartbeat_ack":
+            if self._hb_send_time:
+                self.last_rtt = round((time.time() - self._hb_send_time) * 1000, 2)
+            print(f"[Agent] Heartbeat #{msg.get('sequence')} ACK (RTT: {self.last_rtt}ms)")
+
+        elif msg_type == "probe":
+            probe_id = msg.get("id")
+            print(f"[Agent] Probe received: {probe_id}")
+            self._log_event("probe_received", str(probe_id))
+            ack = json.dumps({
+                "type": "probe_ack",
+                "id": probe_id,
+                "echo": msg.get("content"),
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "hostname": socket.gethostname(),
+            }) + "\n"
+            try:
+                sock.sendall(ack.encode())
+                self._log_event("probe_ack_sent", str(probe_id))
+                print(f"[Agent] Probe ACK sent: {probe_id}")
+            except OSError as e:
+                print(f"[Agent] Failed to reply to probe: {e}")
+
+        elif msg_type == "disconnect":
+            print("[Agent] Disconnect requested by server.")
+            self._log_event("disconnected", "server requested")
+            self.connected = False
 
 
 def run_port_scan(target_ip: str, start_port: int = 20, end_port: int = 45):
@@ -235,6 +371,17 @@ def main():
     # Start background agent
     agent = NetShieldAgent(args.server, args.port)
     agent.start()
+
+    # Local web UI on 127.0.0.1:7000 (background thread)
+    try:
+        from web_ui import start_web_ui
+    except ImportError:
+        from agent.web_ui import start_web_ui
+    try:
+        start_web_ui(agent)
+        print("[Agent] Web UI: http://127.0.0.1:7000")
+    except OSError as e:
+        print(f"[Agent] Web UI could not start on port 7000: {e}")
 
     if args.scenario:
         time.sleep(1.0)
