@@ -203,6 +203,7 @@ class NetShieldAgent:
                         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
                         "sequence": self.seq,
                         "send_time": self._hb_send_time,
+                        "rtt_ms": self.last_rtt if self.last_rtt is not None else 1.0,
                     }) + "\n"
                     try:
                         self.sock.sendall(hb.encode())

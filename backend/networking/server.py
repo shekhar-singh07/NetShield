@@ -15,9 +15,10 @@ logger = logging.getLogger("netshield.server")
 class NetShieldServer:
     """TCP server that listens for remote NetShield agent connections."""
 
-    def __init__(self, host: str = "0.0.0.0", port: int = 5000):
+    def __init__(self, host: str = "0.0.0.0", port: int = 5000, on_packet=None):
         self.host = host
         self.port = port
+        self.on_packet = on_packet
         self._running = False
         self._server_socket = None
         self._thread = None
@@ -219,6 +220,23 @@ class NetShieldServer:
                 if not data:
                     break
 
+                # Feed packet to analyzer/detector callback
+                if self.on_packet:
+                    try:
+                        self.on_packet({
+                            "timestamp": time.time(),
+                            "source_ip": addr[0],
+                            "destination_ip": self.host if self.host != "0.0.0.0" else "127.0.0.1",
+                            "source_port": addr[1],
+                            "destination_port": self.port,
+                            "protocol": "TCP",
+                            "length": len(data),
+                            "tcp_flags": "0x0018",
+                            "protocols_str": "eth:ip:tcp",
+                        })
+                    except Exception:
+                        pass
+
                 buffer += data.decode("utf-8", errors="replace")
 
                 # Process newline-delimited JSON messages
@@ -274,12 +292,23 @@ class NetShieldServer:
             logger.info(f"HELLO from {msg.get('hostname')}, ACK sent")
 
         elif msg_type == "heartbeat":
+            agent_rtt = msg.get("rtt_ms")
             send_time = msg.get("send_time", now)
-            rtt = round((now - send_time) * 1000, 2) if isinstance(send_time, (int, float)) else None
+            calculated_rtt = round((now - send_time) * 1000, 2) if isinstance(send_time, (int, float)) else None
+
+            # Two computers have unsynchronized system clocks; reject negative or runaway wall-clock values
+            if agent_rtt is not None and isinstance(agent_rtt, (int, float)) and agent_rtt >= 0:
+                final_rtt = round(float(agent_rtt), 2)
+            elif calculated_rtt is not None and 0 <= calculated_rtt < 1000:
+                final_rtt = calculated_rtt
+            else:
+                prev_rtt = self.remote_device.get("rtt_ms")
+                final_rtt = prev_rtt if (prev_rtt is not None and prev_rtt >= 0) else 1.0
+
             with self._lock:
                 self.remote_device["last_heartbeat"] = time.strftime("%Y-%m-%dT%H:%M:%S")
                 self.remote_device["last_message"] = f"Heartbeat #{msg.get('sequence', '?')}"
-                self.remote_device["rtt_ms"] = rtt
+                self.remote_device["rtt_ms"] = final_rtt
                 self.remote_device["_last_hb_time"] = now
             ack = json.dumps({
                 "type": "heartbeat_ack",

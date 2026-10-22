@@ -83,7 +83,7 @@ def on_packet(packet: dict):
 
 
 packet_capture = PacketCapture(interface=CAPTURE_INTERFACE, on_packet=on_packet)
-tcp_server = NetShieldServer(host=SERVER_HOST, port=SERVER_PORT)
+tcp_server = NetShieldServer(host=SERVER_HOST, port=SERVER_PORT, on_packet=on_packet)
 
 # Chart data recording thread
 _chart_thread_running = False
@@ -127,13 +127,48 @@ def startup():
     """Start background services."""
     tcp_server.start()
     detection_engine.start()
+
+    # Auto-start packet capture & monitoring
+    if packet_capture.available:
+        iface = CAPTURE_INTERFACE
+        if not iface:
+            # Auto-detect best interface (Wi-Fi or Ethernet)
+            try:
+                ifaces = packet_capture.get_interfaces()
+                for cand in ifaces:
+                    cand_lower = cand.lower()
+                    if "wi-fi" in cand_lower or "ethernet" in cand_lower:
+                        iface = cand.split(".")[0].strip()
+                        break
+                if not iface and ifaces:
+                    iface = ifaces[0].split(".")[0].strip()
+            except Exception as e:
+                logger.warning(f"Failed to auto-detect interface: {e}")
+
+        if iface:
+            logger.info(f"Auto-starting packet capture on interface {iface}")
+            started = packet_capture.start(iface)
+            if started:
+                metrics_collector.start_monitoring()
+                logger.info(f"Live packet capture active on interface {iface}")
+            else:
+                logger.warning(f"Could not auto-start capture: {packet_capture.unavailable_reason}")
+                metrics_collector.start_monitoring()
+        else:
+            metrics_collector.start_monitoring()
+    else:
+        logger.info("TShark unavailable — running in monitoring mode")
+        metrics_collector.start_monitoring()
+
     # Start chart recording thread
     t = threading.Thread(target=_chart_recorder, daemon=True)
     t.start()
     logger.info(f"NetShield backend started")
     logger.info(f"  TCP Server: {SERVER_HOST}:{SERVER_PORT}")
-    logger.info(f"  Capture Interface: {CAPTURE_INTERFACE or '(not configured)'}")
+    logger.info(f"  Capture Interface: {packet_capture.interface or CAPTURE_INTERFACE or '(not configured)'}")
     logger.info(f"  TShark available: {packet_capture.available}")
+    logger.info(f"  Packet capture running: {packet_capture._running}")
+    logger.info(f"  Monitoring active: {metrics_collector.is_monitoring}")
 
 
 @app.on_event("shutdown")

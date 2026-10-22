@@ -2,7 +2,23 @@
  * OverviewPage — system health, metrics, protocols, recent alerts.
  */
 import { useState, useEffect } from 'react';
-import { fetchStatus, fetchMetrics, fetchEvents, fetchDevices, fetchModelInfo } from '../api';
+import {
+  fetchStatus,
+  fetchMetrics,
+  fetchEvents,
+  fetchDevices,
+  fetchModelInfo,
+  startMonitoring,
+  stopMonitoring,
+} from '../api';
+
+function formatRtt(val) {
+  if (val == null) return null;
+  const num = Number(val);
+  if (isNaN(num)) return null;
+  if (num < 0) return '< 1 ms';
+  return `${num.toFixed(1)} ms`;
+}
 
 const SEVERITY_STYLES = {
   high: {
@@ -28,6 +44,41 @@ export default function OverviewPage({ backendConnected }) {
   const [metrics, setMetrics] = useState(null);
   const [events, setEvents] = useState([]);
   const [modelInfo, setModelInfo] = useState(null);
+  const [captureLoading, setCaptureLoading] = useState(false);
+
+  const refreshData = async () => {
+    try {
+      const [s, d, m, e] = await Promise.all([
+        fetchStatus(),
+        fetchDevices(),
+        fetchMetrics(),
+        fetchEvents(10),
+      ]);
+      setStatus(s);
+      setDevices(d);
+      setMetrics(m);
+      setEvents(e?.events || []);
+    } catch {
+      // Silently preserve state
+    }
+  };
+
+  const handleToggleCapture = async () => {
+    if (captureLoading) return;
+    setCaptureLoading(true);
+    try {
+      if (status?.packet_capture?.running) {
+        await stopMonitoring();
+      } else {
+        await startMonitoring();
+      }
+      await refreshData();
+    } catch {
+      // ignore
+    } finally {
+      setCaptureLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!backendConnected) return;
@@ -108,10 +159,11 @@ export default function OverviewPage({ backendConnected }) {
       next: 'Next: open Devices and run the command.',
     };
   } else {
+    const rttStr = formatRtt(remote.rtt_ms);
     banner = {
       tone: 'bg-secondary/10 border-secondary/30 text-secondary',
       icon: 'check_circle',
-      text: `All clear · agent connected${remote.rtt_ms != null ? ` · RTT ${remote.rtt_ms} ms` : ''}`,
+      text: `All clear · agent connected${rttStr ? ` · RTT ${rttStr}` : ''}`,
       next: 'Next: run a simulation on Security.',
     };
   }
@@ -213,18 +265,35 @@ export default function OverviewPage({ backendConnected }) {
                 {captureRunning ? status?.packet_capture?.interface || 'TShark' : 'Synthetic mode'}
               </div>
               <div className="text-[11px] font-mono text-outline">
-                {captureAvail ? 'TShark available' : 'No TShark installed'}
+                {captureAvail ? (captureRunning ? 'Capturing live traffic' : 'TShark ready (idle)') : 'No TShark installed'}
               </div>
             </div>
           </div>
-          <span className={`inline-flex items-center gap-1 font-mono text-[11px] font-medium px-2 py-0.5 rounded border ${
-            captureRunning
-              ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30'
-              : 'text-tertiary-fixed-dim bg-tertiary-container/20 border-tertiary-container/30'
-          }`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${captureRunning ? 'bg-emerald-400' : 'bg-tertiary'}`} />
-            {captureRunning ? 'Live' : 'Synthetic'}
-          </span>
+          <div className="flex items-center gap-2">
+            {captureAvail && (
+              <button
+                type="button"
+                onClick={handleToggleCapture}
+                disabled={captureLoading}
+                className={`text-[11px] font-mono px-2 py-0.5 rounded border transition-colors cursor-pointer ${
+                  captureRunning
+                    ? 'border-outline-variant text-outline hover:text-on-surface hover:bg-surface-container'
+                    : 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20'
+                }`}
+                title={captureRunning ? 'Stop live packet capture' : 'Start live packet capture'}
+              >
+                {captureLoading ? '...' : captureRunning ? 'Stop' : 'Start'}
+              </button>
+            )}
+            <span className={`inline-flex items-center gap-1 font-mono text-[11px] font-medium px-2 py-0.5 rounded border ${
+              captureRunning
+                ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30'
+                : 'text-tertiary-fixed-dim bg-tertiary-container/20 border-tertiary-container/30'
+            }`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${captureRunning ? 'bg-emerald-400' : 'bg-tertiary'}`} />
+              {captureRunning ? 'Live' : 'Synthetic'}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -246,7 +315,7 @@ export default function OverviewPage({ backendConnected }) {
           label="Bandwidth Throughput"
           value={metrics?.bandwidth_mbps != null ? `${metrics.bandwidth_mbps}` : '0.00'}
           unit="Mbps"
-          sub={metrics?.latency_ms != null ? `RTT ${metrics.latency_ms}ms` : null}
+          sub={metrics?.latency_ms != null ? `RTT ${formatRtt(metrics.latency_ms)}` : null}
           icon="speed"
         />
         <MetricCard
