@@ -1,0 +1,8 @@
+unit: frontend-monitoring
+commit: false
+candidate_splits:
+  - id: "src/pages/MonitoringPage.jsx:20-410"
+    drivers: [concern_split, reuse_split]
+    rationale: "Capture controls, metric cards, traffic charts, protocol distribution, and flow table are independently testable presentation concerns."
+    source_slice: {file: "src/pages/MonitoringPage.jsx", lines: [20, 410]}
+

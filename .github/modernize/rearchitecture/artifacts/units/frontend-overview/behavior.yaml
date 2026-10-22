@@ -1,0 +1,23 @@
+unit: frontend-overview
+side_effects:
+  - source_loc: "src/pages/OverviewPage.jsx:32"
+    effect: "Poll status, devices, metrics, and recent events every 2.5 seconds."
+    must_preserve: true
+branches:
+  - source_loc: "src/App.jsx:41"
+    condition: "role is absent"
+    behavior: "Redirect protected dashboard routes to /setup."
+    must_preserve: true
+error_paths:
+  - source_loc: "src/pages/OverviewPage.jsx:394"
+    trigger: "Backend requests fail"
+    outcome: "Render Backend Disconnected state."
+    contract: "No fabricated metrics are shown."
+    must_preserve: true
+concurrency:
+  model: event-loop
+  tx_boundary:
+    source_loc: "src/pages/OverviewPage.jsx:62"
+    scope: "Interval polling lifecycle is cleaned up on unmount."
+    isolation: "n/a"
+    must_preserve: true

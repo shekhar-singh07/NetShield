@@ -1,0 +1,30 @@
+flows:
+  - name: browser-role-selection
+    medium: cookie
+    key: "netshield.role"
+    writer:
+      unit: frontend-overview
+      source_loc: "src/roleStorage.js:5"
+    reader:
+      unit: frontend-devices
+      source_loc: "src/App.jsx:17"
+    pairing: matched
+    must_preserve: true
+    must_confirm: null
+    verification_hint: "Choose a role, reload, and confirm protected routes remain available."
+    notes: "The role is stored in localStorage; setup routes remain reachable without a role."
+  - name: agent-heartbeat-state
+    medium: framework-context
+    key: "remote device heartbeat and RTT"
+    writer:
+      unit: agent-client
+      source_loc: "backend/networking/client.py:143"
+    reader:
+      unit: backend-api
+      source_loc: "backend/main.py:156"
+    pairing: matched
+    must_preserve: true
+    must_confirm: null
+    verification_hint: "Observe heartbeat sequence and RTT in /api/status and Devices page."
+    notes: "The TCP server owns the remote state and exposes sanitized values to the API."
+

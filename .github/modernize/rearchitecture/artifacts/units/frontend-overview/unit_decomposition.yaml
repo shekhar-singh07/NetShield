@@ -1,0 +1,8 @@
+unit: frontend-overview
+commit: false
+candidate_splits:
+  - id: "src/pages/OverviewPage.jsx:25-390"
+    drivers: [concern_split]
+    rationale: "Overview combines status polling, metric cards, protocol display, device summary, and recent alerts; these concerns could be separated if the page grows."
+    source_slice: {file: "src/pages/OverviewPage.jsx", lines: [25, 390]}
+

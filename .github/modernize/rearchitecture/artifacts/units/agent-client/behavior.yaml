@@ -1,0 +1,30 @@
+unit: agent-client
+side_effects:
+  - source_loc: "backend/networking/client.py:82"
+    effect: "Open a TCP socket, send HELLO, and maintain a receiver plus heartbeat thread."
+    must_preserve: true
+  - source_loc: "backend/networking/client.py:147"
+    effect: "Respond immediately to probe messages with probe_ack echo data."
+    must_preserve: true
+branches:
+  - source_loc: "backend/networking/client.py:110"
+    condition: "connection closes or JSON frame is invalid"
+    behavior: "Stop/close client state; invalid frames are skipped."
+    must_preserve: true
+  - source_loc: "agent/traffic_generator.py:105"
+    condition: "heartbeat ACK is absent"
+    behavior: "Mark disconnected and retry after a delay."
+    must_preserve: true
+error_paths:
+  - source_loc: "backend/networking/client.py:121"
+    trigger: "Connection refused or socket exception"
+    outcome: "Record error message, log, close socket, and expose disconnected state."
+    contract: "Client status/error state."
+    must_preserve: true
+concurrency:
+  model: thread-pool
+  tx_boundary:
+    source_loc: "backend/networking/client.py:92"
+    scope: "Receiver and heartbeat loops operate concurrently over one socket."
+    isolation: "Socket-level ordering"
+    must_preserve: true

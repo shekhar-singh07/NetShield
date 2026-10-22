@@ -1,0 +1,15 @@
+unit: frontend-overview
+bindings:
+  - type: route-declaration
+    name: "path=/"
+    source_loc: "src/App.jsx:41"
+    target: "OverviewPage"
+    must_appear_in_target: true
+    notes: "Protected by stored role."
+runtime_config:
+  - key: VITE_API_URL
+    source_loc: "src/api.js:5"
+    source: env
+    default_value: "http://localhost:8000 or derived host"
+    must_appear_in_target: true
+    notes: "Controls browser-to-FastAPI base URL."

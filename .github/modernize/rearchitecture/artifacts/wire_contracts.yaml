@@ -1,0 +1,50 @@
+contracts:
+  - name: dashboard-rest-api
+    unit: backend-api
+    type: rest
+    stability: must_preserve
+    source_loc: "backend/main.py:153"
+    contract:
+      method: "GET/POST"
+      path: "/api/*"
+      request: "Query parameters for simulations/monitoring; JSON bodies for agent/custom tests"
+      response: "JSON status, metrics, flows, events, model metadata, and operation results"
+      error: "Operation-specific JSON success/error responses; validation errors from FastAPI/Pydantic"
+      auth: "none"
+    target_contract:
+      method: "FastAPI route handlers returning JSON"
+      notes: "Keep endpoint paths and response field names consumed by src/api.js."
+    semantic_divergence: []
+  - name: agent-json-line-protocol
+    unit: agent-client
+    type: sdk
+    stability: frozen
+    source_loc: "backend/networking/client.py:82"
+    contract:
+      method: "TCP socket frames"
+      path: "server port 5000"
+      request: "newline-delimited JSON hello, heartbeat, and probe_ack messages"
+      response: "hello_ack, heartbeat_ack, and probe messages"
+      error: "disconnect/reconnect and connection error state"
+      auth: "none"
+    target_contract:
+      method: "TCP IPv4 socket with newline-delimited UTF-8 JSON"
+      notes: "Preserve message type names, newline framing, heartbeat interval, and probe echo fields."
+    semantic_divergence: []
+  - name: sqlite-security-events
+    unit: backend-api
+    type: sql
+    stability: must_preserve
+    source_loc: "backend/database/database.py:19"
+    contract:
+      method: "SQLite INSERT/SELECT"
+      path: "security_events"
+      request: "Security event fields"
+      response: "Most recent events and counts"
+      error: "SQLite errors propagate to backend logging/callers"
+      auth: "none"
+    target_contract:
+      method: "SQLite database with security_events fields"
+      notes: "Preserve event audit data and recent-event behavior."
+    semantic_divergence: []
+

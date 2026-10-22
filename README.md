@@ -156,7 +156,27 @@ NetShield/
 - **Git:** Installed on both machines.
 
 ### Packet Capture (Wireshark / TShark)
-*Packet capture is optional for simulation and testing.* NetShield includes synthetic packet injection and software socket monitoring so that all ML and rule detection features work even if Wireshark is not installed. For capturing raw physical network packets:
+*Packet capture is optional for simulation and testing.* NetShield includes synthetic packet injection and software socket monitoring so that rule detection and pipeline testing work even if Wireshark is not installed. The ML model no longer trains on synthetic data: it loads a persisted model trained from a real labelled flow dataset, or remains unavailable until one is configured. For capturing raw physical network packets:
+
+### Training the ML model from real data
+
+Download a labelled flow dataset such as CIC-IDS2017 or NSL-KDD, keep its files outside
+the repository, and point NetShield at the file or directory:
+
+```powershell
+$env:NETSHIELD_DATASET_PATH = "C:\datasets\CICIDS2017"
+python -m backend.detection.train_model C:\datasets\CICIDS2017 `
+  --model backend\detection\nids_random_forest.pkl
+```
+
+The loader accepts CIC-IDS-style columns such as `Flow Duration`, `Flow Packets/s`,
+`SYN Flag Count`, `RST Flag Count`, `Average Packet Size`, `Destination Port`,
+and `Label`. NSL-KDD's fixed 43-column rows are also supported. It maps
+`BENIGN`/`normal` to `NORMAL`, port scanning/probe labels to `PORT_SCAN`, and
+volumetric DoS/DDoS labels to `TRAFFIC_SPIKE`. Unsupported or malformed rows
+are skipped and reported in the model metadata. The trained model stores its
+dataset path, row counts, class counts, and real-dataset provenance. Old
+synthetic models are rejected.
 
 - **Windows:**
   1. Download and install Wireshark from [https://www.wireshark.org/download.html](https://www.wireshark.org/download.html).
@@ -341,7 +361,10 @@ npm run dev
 Open `http://localhost:5173` on Laptop B.
 
 ### Step 8.5: Start the Agent on Laptop A
-On **Laptop A**, activate the virtual environment and launch the agent targeting Laptop B's IP:
+On **Laptop A**, open the NetShield dashboard backed by Laptop A's local service, choose
+**Run as Agent**, enter Laptop B's LAN address, and click **Connect to server**.
+The setup screen starts the local agent connection through the backend; no command needs
+to be copied or typed. The equivalent developer command is:
 ```bash
 python agent/traffic_generator.py --server <LAPTOP_B_IP> --port 5000
 ```

@@ -1,0 +1,15 @@
+unit: agent-client
+bindings:
+  - type: convention
+    name: "newline-delimited JSON over TCP"
+    source_loc: "backend/networking/client.py:82"
+    target: "NetShieldServer on port 5000"
+    must_appear_in_target: true
+    notes: "Application-level framing is newline based."
+runtime_config:
+  - key: REMOTE_HOST/REMOTE_PORT
+    source_loc: "backend/networking/client.py:208"
+    source: env
+    default_value: "127.0.0.1:5000"
+    must_appear_in_target: true
+    notes: "Agent target server."

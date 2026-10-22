@@ -1,0 +1,8 @@
+unit: frontend-devices
+commit: false
+candidate_splits:
+  - id: "src/pages/DevicesPage.jsx:18-300"
+    drivers: [concern_split]
+    rationale: "Device cards, setup progress, command-copy instructions, and agent probe controls are separate user workflows."
+    source_slice: {file: "src/pages/DevicesPage.jsx", lines: [18, 300]}
+

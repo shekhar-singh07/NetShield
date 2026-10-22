@@ -28,6 +28,9 @@ env/
 
 # Environment Variables & Secrets
 .env
+datasets/*
+!datasets/.gitkeep
+backend/detection/nids_random_forest.pkl
 .env.local
 .env.*.local
 !.env.example

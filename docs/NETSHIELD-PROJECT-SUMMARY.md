@@ -9,7 +9,7 @@ NetShield-ML is a distributed network intrusion detection and monitoring system.
 - A **React/Vite dashboard** that presents connectivity, traffic, flow, detection, and security-event information.
 - A **FastAPI backend** that connects the dashboard to the TCP server, packet capture, flow analysis, detection engine, database, and simulation APIs.
 
-The project supports both real packet capture when TShark/Wireshark is installed and a synthetic testbed fallback for environments such as GitHub Codespaces.
+The project supports both real packet capture when TShark/Wireshark is installed and a synthetic testbed fallback for environments such as GitHub Codespaces. ML training requires a real labelled flow dataset; synthetic packets remain available for exercising the runtime pipeline.
 
 ## 2. High-level architecture
 
@@ -100,6 +100,22 @@ The model uses flow and sliding-window features including:
 - Reset count.
 - Average packet size.
 - SYN ratio.
+
+Training is performed from CIC-IDS2017-style labelled CSV flow data or NSL-KDD
+labelled rows configured through
+`NETSHIELD_DATASET_PATH`. The application rejects old models without real-dataset
+provenance and does not silently retrain on synthetic data.
+
+Train explicitly with:
+
+```powershell
+python -m backend.detection.train_model C:\datasets\CICIDS2017 `
+  --model backend\detection\nids_random_forest.pkl
+```
+
+The loader derives NetShield's seven runtime features from labelled flow columns,
+groups destination ports by source IP for port-diversity features, and records
+dataset provenance and class counts in the persisted model metadata.
 
 The supported threat categories include:
 

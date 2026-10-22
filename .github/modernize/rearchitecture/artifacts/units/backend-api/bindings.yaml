@@ -1,0 +1,33 @@
+unit: backend-api
+bindings:
+  - type: route-declaration
+    name: "FastAPI app and /api/* routes"
+    source_loc: "backend/main.py:111"
+    target: "FastAPI application"
+    must_appear_in_target: true
+    notes: "CORS is enabled for the development dashboard."
+  - type: convention
+    name: "FastAPI startup/shutdown events"
+    source_loc: "backend/main.py:125"
+    target: "startup/shutdown lifecycle"
+    must_appear_in_target: true
+    notes: "Owns background TCP, detection, capture, and chart services."
+runtime_config:
+  - key: SERVER_HOST/SERVER_PORT
+    source_loc: "backend/config.py:46"
+    source: env
+    default_value: "0.0.0.0:5000"
+    must_appear_in_target: true
+    notes: "TCP agent listener."
+  - key: API_HOST/API_PORT
+    source_loc: "backend/config.py:54"
+    source: env
+    default_value: "0.0.0.0:8000"
+    must_appear_in_target: true
+    notes: "FastAPI bind address."
+  - key: CAPTURE_INTERFACE
+    source_loc: "backend/config.py:50"
+    source: env
+    default_value: ""
+    must_appear_in_target: true
+    notes: "TShark interface; blank enables synthetic-only operation."

@@ -1,0 +1,26 @@
+unit: frontend-monitoring
+side_effects:
+  - source_loc: "src/pages/MonitoringPage.jsx:49"
+    effect: "Poll status, metrics, chart data, and flows every 1.5 seconds."
+    must_preserve: true
+  - source_loc: "src/pages/MonitoringPage.jsx:123"
+    effect: "Start configured TShark capture through the API."
+    must_preserve: true
+branches:
+  - source_loc: "src/pages/MonitoringPage.jsx:96"
+    condition: "TShark unavailable"
+    behavior: "Show synthetic mode and direct user to simulations."
+    must_preserve: true
+error_paths:
+  - source_loc: "src/pages/MonitoringPage.jsx:136"
+    trigger: "Capture start fails"
+    outcome: "Show failure reason from API."
+    contract: "Operation result contains success=false and error/reason."
+    must_preserve: true
+concurrency:
+  model: event-loop
+  tx_boundary:
+    source_loc: "src/pages/MonitoringPage.jsx:49"
+    scope: "Polling interval is cancelled on unmount."
+    isolation: "n/a"
+    must_preserve: true

@@ -1,0 +1,9 @@
+unit: frontend-devices
+bindings:
+  - type: route-declaration
+    name: "path=/devices"
+    source_loc: "src/App.jsx:44"
+    target: "DevicesPage"
+    must_appear_in_target: true
+    notes: "Protected by role."
+runtime_config: []

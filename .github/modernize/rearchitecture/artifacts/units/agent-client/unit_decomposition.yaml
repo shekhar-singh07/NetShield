@@ -1,0 +1,7 @@
+unit: agent-client
+commit: false
+candidate_splits:
+  - id: "agent/traffic_generator.py:44-205"
+    drivers: [concern_split, protocol_split]
+    rationale: "Heartbeat client behavior and attack/normal traffic generators use different socket protocols and can evolve independently."
+    source_slice: {file: "agent/traffic_generator.py", lines: [44, 205]}

@@ -1,0 +1,9 @@
+unit: frontend-monitoring
+bindings:
+  - type: route-declaration
+    name: "path=/monitoring"
+    source_loc: "src/App.jsx:42"
+    target: "MonitoringPage"
+    must_appear_in_target: true
+    notes: "Protected by role."
+runtime_config: []

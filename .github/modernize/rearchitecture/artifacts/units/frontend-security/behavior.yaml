@@ -1,0 +1,26 @@
+unit: frontend-security
+side_effects:
+  - source_loc: "src/pages/SecurityPage.jsx:50"
+    effect: "Poll status, events, and ML model metadata every 2.5 seconds."
+    must_preserve: true
+  - source_loc: "src/pages/SecurityPage.jsx:129"
+    effect: "Run controlled simulations and refresh the alert queue."
+    must_preserve: true
+branches:
+  - source_loc: "src/pages/SecurityPage.jsx:98"
+    condition: "suspicious count is greater than zero"
+    behavior: "Show alert banner and direct user to alert details."
+    must_preserve: true
+error_paths:
+  - source_loc: "src/pages/SecurityPage.jsx:29"
+    trigger: "Backend polling fails"
+    outcome: "Retain current page state rather than inventing data."
+    contract: "Existing event/model data remains displayed."
+    must_preserve: true
+concurrency:
+  model: event-loop
+  tx_boundary:
+    source_loc: "src/pages/SecurityPage.jsx:50"
+    scope: "Polling interval is cancelled on unmount."
+    isolation: "n/a"
+    must_preserve: true

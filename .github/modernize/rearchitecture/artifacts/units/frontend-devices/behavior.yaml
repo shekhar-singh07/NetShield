@@ -1,0 +1,26 @@
+unit: frontend-devices
+side_effects:
+  - source_loc: "src/pages/DevicesPage.jsx:41"
+    effect: "Poll local/remote device and status information every 2 seconds."
+    must_preserve: true
+  - source_loc: "src/components/AgentControlPanel.jsx:60"
+    effect: "Send a real probe and display returned ACK RTT."
+    must_preserve: true
+branches:
+  - source_loc: "src/pages/DevicesPage.jsx:89"
+    condition: "remote status is connected, connecting, lost, or waiting"
+    behavior: "Render the corresponding connection-health banner."
+    must_preserve: true
+error_paths:
+  - source_loc: "src/components/AgentControlPanel.jsx:74"
+    trigger: "Agent connection/probe request fails"
+    outcome: "Show an explicit error/toast."
+    contract: "Backend error message is surfaced."
+    must_preserve: true
+concurrency:
+  model: event-loop
+  tx_boundary:
+    source_loc: "src/pages/DevicesPage.jsx:41"
+    scope: "Device polling interval is cancelled on unmount."
+    isolation: "n/a"
+    must_preserve: true

@@ -1,0 +1,9 @@
+unit: frontend-security
+bindings:
+  - type: route-declaration
+    name: "path=/security"
+    source_loc: "src/App.jsx:43"
+    target: "SecurityPage"
+    must_appear_in_target: true
+    notes: "Protected by role."
+runtime_config: []

@@ -1,0 +1,8 @@
+unit: backend-api
+commit: false
+candidate_splits:
+  - id: "backend/main.py:153-630"
+    drivers: [concern_split, lifecycle_split]
+    rationale: "The FastAPI entrypoint owns status, monitoring, simulation, persistence, model, and agent-control concerns and is a natural candidate for route-module separation."
+    source_slice: {file: "backend/main.py", lines: [153, 630]}
+

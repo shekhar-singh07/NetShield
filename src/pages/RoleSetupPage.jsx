@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchStatus } from '../api';
+import { connectAgent, fetchDevices, fetchStatus } from '../api';
 import { setStoredRole } from '../roleStorage';
 
 function RoleCard({ icon, title, description, features, action, onClick }) {
@@ -89,6 +89,7 @@ export function ServerSetupPage({ backendConnected }) {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const [copied, setCopied] = useState(false);
 
   const checkServer = async () => {
     setLoading(true);
@@ -110,6 +111,13 @@ export function ServerSetupPage({ backendConnected }) {
     return () => window.clearTimeout(timer);
   }, [backendConnected]);
 
+  const copyAddress = async () => {
+    if (!status?.ip) return;
+    await navigator.clipboard.writeText(`${status.ip}:${status.tcp_server?.port || 5000}`);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2200);
+  };
+
   const banner = !backendConnected
     ? { tone: TONE.red, text: 'Backend unreachable.', next: 'Next: start the FastAPI service.' }
     : !message
@@ -123,11 +131,30 @@ export function ServerSetupPage({ backendConnected }) {
   return (
     <SetupShell title="Set up your NetShield server" onBack={() => navigate('/setup')}>
       <StatusBanner {...banner} />
+      <div className="mb-5 rounded-lg border border-primary/30 bg-primary/10 p-4">
+        <div className="flex items-center gap-2 text-sm font-semibold text-primary">
+          <span className="material-symbols-outlined text-[19px]">link</span>
+          Connect another computer
+        </div>
+        <p className="mt-2 text-sm leading-6 text-on-surface-variant">
+          Open NetShield on the other computer, choose <strong className="text-on-surface">Agent</strong>,
+          then enter this LAN address. Keep this page open while it connects.
+        </p>
+      </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <InfoTile label="Reachable LAN address" value={status?.ip || (backendConnected ? 'Detecting…' : 'Backend unavailable')} />
         <InfoTile label="Agent TCP port" value={status?.tcp_server?.port || 5000} />
         <InfoTile label="TCP listener" value={status?.tcp_server?.running ? 'Running' : 'Not running'} />
         <InfoTile label="API port" value={status?.api_server?.port || 8000} />
+      </div>
+      <div className="mt-5 rounded-lg border border-outline-variant/70 bg-surface-container-lowest p-4">
+        <div className="font-mono text-[10px] uppercase tracking-wider text-outline">Address for the agent</div>
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <code className="text-lg font-semibold text-primary">{status?.ip ? `${status.ip}:${status.tcp_server?.port || 5000}` : 'Detecting…'}</code>
+          <button type="button" onClick={copyAddress} disabled={!status?.ip} className="rounded-md border border-outline-variant px-3 py-1.5 text-xs font-semibold text-on-surface-variant hover:border-primary hover:text-primary disabled:opacity-50">
+            {copied ? 'Copied' : 'Copy address'}
+          </button>
+        </div>
       </div>
       <div className="mt-6 flex flex-wrap gap-3">
         <button type="button" onClick={checkServer} disabled={loading} className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-on-primary disabled:cursor-wait disabled:opacity-60">
@@ -142,26 +169,66 @@ export function AgentSetupPage({ backendConnected }) {
   const navigate = useNavigate();
   const [host, setHost] = useState('');
   const [port, setPort] = useState('5000');
-  const [copied, setCopied] = useState(false);
-  const command = `python agent/traffic_generator.py --server ${host.trim() || '<SERVER_IP>'} --port ${port || 5000}`;
+  const [connecting, setConnecting] = useState(false);
+  const [connection, setConnection] = useState(null);
+  const [error, setError] = useState('');
 
-  const copyCommand = async () => {
-    await navigator.clipboard.writeText(command);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 2200);
+  useEffect(() => {
+    if (!backendConnected) return undefined;
+    let active = true;
+    const refresh = async () => {
+      try {
+        const devices = await fetchDevices();
+        if (active && devices.remote?.status === 'connected') {
+          setConnection(devices.remote);
+        }
+      } catch {
+        // The app-level backend status provides the offline message.
+      }
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 2500);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [backendConnected]);
+
+  const handleConnect = async (event) => {
+    event.preventDefault();
+    setConnecting(true);
+    setError('');
+    setConnection(null);
+    try {
+      const result = await connectAgent(host.trim(), Number(port));
+      if (!result.success) {
+        setError(result.error || 'The agent could not connect to the server.');
+      } else {
+        setConnection(result);
+      }
+    } catch {
+      setError('The local NetShield service is unavailable. Please try again.');
+    } finally {
+      setConnecting(false);
+    }
   };
 
   const banner = !backendConnected
-    ? { tone: TONE.red, text: 'Local backend offline.', next: 'Next: start the FastAPI service.' }
-    : { tone: TONE.amber, text: 'Agent not connected.', next: 'Next: run the command on the agent computer.' };
+    ? { tone: TONE.red, text: 'NetShield service unavailable.', next: 'Open the local NetShield service, then try again.' }
+    : connection
+    ? { tone: TONE.green, text: 'Connected to the server.', next: 'You can now use the monitoring dashboard.' }
+    : error
+    ? { tone: TONE.red, text: 'Could not connect to the server.', next: error }
+    : { tone: TONE.amber, text: 'Ready to connect.', next: 'Enter the server address shown on the other computer.' };
 
   return (
     <SetupShell title="Connect this computer as an agent" onBack={() => navigate('/setup')}>
       <StatusBanner {...banner} />
       <p className="text-sm leading-6 text-on-surface-variant">
-        The agent runs on the other computer — launch it with the command below.
+        Enter the LAN address displayed on the computer running NetShield as the server.
+        You only need to do this once.
       </p>
-      <div className="mt-5 space-y-4">
+      <form onSubmit={handleConnect} className="mt-5 space-y-4">
         <label className="block text-sm text-on-surface">
           Server IP address or hostname
           <input required value={host} onChange={(event) => setHost(event.target.value)} placeholder="192.168.1.50 or nids-host" pattern="[A-Za-z0-9][A-Za-z0-9.-]*" className="mt-2 w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-on-surface outline-none focus:border-primary" />
@@ -170,14 +237,19 @@ export function AgentSetupPage({ backendConnected }) {
           TCP port
           <input required type="number" min="1" max="65535" value={port} onChange={(event) => setPort(event.target.value)} className="mt-2 w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-on-surface outline-none focus:border-primary" />
         </label>
-        <div>
-          <div className="mb-2 text-xs uppercase tracking-wider text-outline">Run on the agent computer</div>
-          <code className="block overflow-x-auto rounded-lg border border-outline-variant bg-surface-container-lowest p-3 text-xs text-primary">{command}</code>
-        </div>
-        <button type="button" onClick={copyCommand} className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-on-primary">
-          {copied ? 'Copied' : 'Copy command'}
+        <button type="submit" disabled={connecting || !backendConnected} className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-on-primary disabled:cursor-wait disabled:opacity-60">
+          <span className="material-symbols-outlined text-[18px]">{connecting ? 'progress_activity' : 'link'}</span>
+          {connecting ? 'Connecting…' : 'Connect to server'}
         </button>
-      </div>
+      </form>
+      {connection && (
+        <div className="mt-5 rounded-lg border border-secondary/30 bg-secondary/10 p-4 text-sm text-secondary">
+          <div className="font-semibold">Connection established</div>
+          <div className="mt-1 text-secondary/80">
+            {connection.hostname ? `${connection.hostname} is online.` : 'The server accepted this agent.'}
+          </div>
+        </div>
+      )}
     </SetupShell>
   );
 }

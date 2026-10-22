@@ -1,0 +1,8 @@
+unit: frontend-security
+commit: false
+candidate_splits:
+  - id: "src/pages/SecurityPage.jsx:13-273"
+    drivers: [concern_split, reuse_split]
+    rationale: "The page coordinates event queue, simulation controls, custom traffic lab, ML diagnostics, and threat inspection; each is a candidate presentation boundary."
+    source_slice: {file: "src/pages/SecurityPage.jsx", lines: [13, 273]}
+

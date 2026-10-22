@@ -1,0 +1,33 @@
+unit: backend-api
+side_effects:
+  - source_loc: "backend/main.py:79"
+    effect: "Send every packet through FlowAnalyzer and DetectionEngine."
+    must_preserve: true
+  - source_loc: "backend/main.py:62"
+    effect: "Queue detection events in memory and persist them to SQLite."
+    must_preserve: true
+  - source_loc: "backend/main.py:125"
+    effect: "Start TCP server, detection engine, and chart recorder at application startup."
+    must_preserve: true
+branches:
+  - source_loc: "backend/main.py:265"
+    condition: "TShark unavailable or no interface configured"
+    behavior: "Return explicit capture-unavailable result instead of starting capture."
+    must_preserve: true
+  - source_loc: "backend/main.py:303"
+    condition: "simulation scenario is port_scan, traffic_spike, connection_burst, or normal"
+    behavior: "Inject the corresponding packet pattern and force analysis."
+    must_preserve: true
+error_paths:
+  - source_loc: "backend/main.py:542"
+    trigger: "Invalid source IPv4, protocol, or missing connected agent for network_test"
+    outcome: "Return success=false with a specific validation/connection message."
+    contract: "JSON operation result."
+    must_preserve: true
+concurrency:
+  model: thread-pool
+  tx_boundary:
+    source_loc: "backend/database/database.py:57"
+    scope: "Each event write is serialized by a process lock and committed as one SQLite transaction."
+    isolation: "SQLite default"
+    must_preserve: true

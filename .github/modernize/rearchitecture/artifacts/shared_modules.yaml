@@ -1,0 +1,43 @@
+modules:
+  - name: api-client
+    kind: utility
+    source_loc: "src/api.js:1"
+    used_by_units: [frontend-overview, frontend-monitoring, frontend-security, frontend-devices]
+    fields:
+      - name: fetchStatus
+        type: "function"
+      - name: fetchMetrics
+        type: "function"
+      - name: fetchEvents
+        type: "function"
+      - name: fetchDevices
+        type: "function"
+      - name: fetchModelInfo
+        type: "function"
+      - name: fetchChartData
+        type: "function"
+      - name: fetchInterfaces
+        type: "function"
+      - name: fetchFlows
+        type: "function"
+      - name: startMonitoring
+        type: "function"
+      - name: stopMonitoring
+        type: "function"
+      - name: simulateTraffic
+        type: "function"
+      - name: simulateCustomTraffic
+        type: "function"
+      - name: clearEvents
+        type: "function"
+      - name: connectAgent
+        type: "function"
+      - name: disconnectAgent
+        type: "function"
+      - name: sendAgentMessage
+        type: "function"
+    god_class: false
+    split_candidate: false
+    migration_strategy: copy
+    notes: "Centralizes API base URL discovery and JSON request handling."
+

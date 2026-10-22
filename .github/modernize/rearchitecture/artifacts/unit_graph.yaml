@@ -1,0 +1,103 @@
+units:
+  - name: frontend-overview
+    trigger: page
+    trigger_detail: "GET /"
+    source_anchors:
+      - path: src/pages/OverviewPage.jsx
+        line: 25
+    exported_signature:
+      - method: "React component OverviewPage({ backendConnected })"
+        source_loc: "src/pages/OverviewPage.jsx:25"
+        stability: must_preserve
+    dynamic_entrypoints: []
+    depends_on:
+      - unit: backend-api
+        via: "fetchStatus, fetchMetrics, fetchEvents, fetchDevices, fetchModelInfo"
+    shared_refs:
+      - module: api-client
+        used_fields: [fetchStatus, fetchMetrics, fetchEvents, fetchDevices, fetchModelInfo]
+  - name: frontend-monitoring
+    trigger: page
+    trigger_detail: "GET /monitoring"
+    source_anchors:
+      - path: src/pages/MonitoringPage.jsx
+        line: 20
+    exported_signature:
+      - method: "React component MonitoringPage({ backendConnected })"
+        source_loc: "src/pages/MonitoringPage.jsx:20"
+        stability: must_preserve
+    dynamic_entrypoints: []
+    depends_on:
+      - unit: backend-api
+        via: "metrics, flows, interfaces, monitoring controls"
+    shared_refs:
+      - module: api-client
+        used_fields: [fetchStatus, fetchMetrics, fetchChartData, fetchInterfaces, fetchFlows, startMonitoring, stopMonitoring]
+  - name: frontend-security
+    trigger: page
+    trigger_detail: "GET /security"
+    source_anchors:
+      - path: src/pages/SecurityPage.jsx
+        line: 13
+    exported_signature:
+      - method: "React component SecurityPage({ backendConnected })"
+        source_loc: "src/pages/SecurityPage.jsx:13"
+        stability: must_preserve
+    dynamic_entrypoints: []
+    depends_on:
+      - unit: backend-api
+        via: "events, model metadata, traffic simulation"
+    shared_refs:
+      - module: api-client
+        used_fields: [fetchStatus, fetchEvents, fetchModelInfo, simulateTraffic, simulateCustomTraffic, clearEvents]
+  - name: frontend-devices
+    trigger: page
+    trigger_detail: "GET /devices"
+    source_anchors:
+      - path: src/pages/DevicesPage.jsx
+        line: 18
+    exported_signature:
+      - method: "React component DevicesPage({ backendConnected })"
+        source_loc: "src/pages/DevicesPage.jsx:18"
+        stability: must_preserve
+    dynamic_entrypoints: []
+    depends_on:
+      - unit: backend-api
+        via: "device status and agent control endpoints"
+    shared_refs:
+      - module: api-client
+        used_fields: [fetchDevices, fetchStatus, connectAgent, disconnectAgent, sendAgentMessage]
+  - name: backend-api
+    trigger: api
+    trigger_detail: "FastAPI /api/* HTTP endpoints on port 8000"
+    source_anchors:
+      - path: backend/main.py
+        line: 111
+    exported_signature:
+      - method: "GET /api/status -> JSON"
+        source_loc: "backend/main.py:153"
+        stability: must_preserve
+      - method: "POST /api/simulate/custom -> JSON"
+        source_loc: "backend/main.py:542"
+        stability: must_preserve
+    dynamic_entrypoints: []
+    depends_on:
+      - unit: agent-client
+        via: "connect/disconnect/probe control"
+    shared_refs: []
+  - name: agent-client
+    trigger: handler
+    trigger_detail: "TCP connection to server host:5000"
+    source_anchors:
+      - path: backend/networking/client.py
+        line: 45
+      - path: agent/traffic_generator.py
+        line: 44
+    exported_signature:
+      - method: "newline-delimited JSON hello/heartbeat/probe_ack protocol"
+        source_loc: "backend/networking/client.py:82"
+        stability: frozen
+    dynamic_entrypoints: []
+    depends_on: []
+    shared_refs: []
+
