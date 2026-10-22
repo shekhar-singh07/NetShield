@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { connectAgent, fetchDevices, fetchStatus } from '../api';
+import { fetchStatus } from '../api';
 import { setStoredRole } from '../roleStorage';
 
 function RoleCard({ icon, title, description, features, action, onClick }) {
@@ -172,82 +172,125 @@ export function AgentSetupPage({ backendConnected }) {
   const [connecting, setConnecting] = useState(false);
   const [connection, setConnection] = useState(null);
   const [error, setError] = useState('');
+  const [agentServerOnline, setAgentServerOnline] = useState(null);
+
+  const AGENT_API = 'http://localhost:7001';
 
   useEffect(() => {
-    if (!backendConnected) return undefined;
     let active = true;
-    const refresh = async () => {
+    const check = async () => {
       try {
-        const devices = await fetchDevices();
-        if (active && devices.remote?.status === 'connected') {
-          setConnection(devices.remote);
+        const res = await fetch(`${AGENT_API}/api/agent/status`);
+        const data = await res.json();
+        if (active) {
+          setAgentServerOnline(true);
+          if (data.connected) {
+            setConnection({ hostname: data.server_host, status: 'connected' });
+          }
         }
       } catch {
-        // The app-level backend status provides the offline message.
+        if (active) setAgentServerOnline(false);
       }
     };
-    refresh();
-    const timer = window.setInterval(refresh, 2500);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [backendConnected]);
+    check();
+    const timer = window.setInterval(check, 2500);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
 
   const handleConnect = async (event) => {
     event.preventDefault();
+    if (!agentServerOnline) {
+      setError('Start the agent server first: python agent/agent_server.py');
+      return;
+    }
     setConnecting(true);
     setError('');
     setConnection(null);
     try {
-      const result = await connectAgent(host.trim(), Number(port));
-      if (!result.success) {
-        setError(result.error || 'The agent could not connect to the server.');
-      } else {
+      const res = await fetch(`${AGENT_API}/api/agent/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ host: host.trim(), port: Number(port) || 5000 }),
+      });
+      const result = await res.json();
+      if (result.success || result.connected) {
         setConnection(result);
+      } else {
+        setError(result.error || 'Could not connect. Check the IP and that the server is running.');
       }
     } catch {
-      setError('The local NetShield service is unavailable. Please try again.');
+      setError('Cannot reach local agent server (localhost:7001). Run: python agent/agent_server.py');
     } finally {
       setConnecting(false);
     }
   };
 
-  const banner = !backendConnected
-    ? { tone: TONE.red, text: 'NetShield service unavailable.', next: 'Open the local NetShield service, then try again.' }
-    : connection
-    ? { tone: TONE.green, text: 'Connected to the server.', next: 'You can now use the monitoring dashboard.' }
+  const agentBanner = agentServerOnline === null
+    ? { tone: TONE.amber, text: 'Checking local agent server…', next: 'Please wait.' }
+    : agentServerOnline
+    ? { tone: TONE.green, text: 'Agent server running at localhost:7001', next: 'Enter the server IP below to connect.' }
+    : { tone: TONE.red, text: 'Agent server not running.', next: 'Run: python agent/agent_server.py (or double-click start_agent.bat)' };
+
+  const banner = connection
+    ? { tone: TONE.green, text: 'Connected to the server!', next: 'Open the dashboard to see live agent status.' }
     : error
-    ? { tone: TONE.red, text: 'Could not connect to the server.', next: error }
-    : { tone: TONE.amber, text: 'Ready to connect.', next: 'Enter the server address shown on the other computer.' };
+    ? { tone: TONE.red, text: 'Could not connect.', next: error }
+    : agentBanner;
 
   return (
     <SetupShell title="Connect this computer as an agent" onBack={() => navigate('/setup')}>
       <StatusBanner {...banner} />
+      {!connection && (
+        <div className="mb-5 rounded-lg border border-outline-variant/60 bg-surface-container-lowest p-4">
+          <div className="font-mono text-[11px] uppercase tracking-wider text-outline mb-3">Quick Setup Steps</div>
+          <ol className="space-y-2 text-sm text-on-surface-variant font-mono text-[12px]">
+            <li className={`flex items-start gap-2 ${agentServerOnline ? 'text-secondary' : ''}`}>
+              <span className={`material-symbols-outlined text-[15px] mt-0.5 ${agentServerOnline ? 'text-secondary' : 'text-outline'}`}>
+                {agentServerOnline ? 'check_circle' : 'radio_button_unchecked'}
+              </span>
+              <span>Start the agent server: <code className="text-primary">python agent/agent_server.py</code></span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="material-symbols-outlined text-[15px] mt-0.5 text-outline">radio_button_unchecked</span>
+              <span>Enter Computer B's IP and port below, then click Connect</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="material-symbols-outlined text-[15px] mt-0.5 text-outline">radio_button_unchecked</span>
+              <span>Open the dashboard to see live connection status</span>
+            </li>
+          </ol>
+        </div>
+      )}
       <p className="text-sm leading-6 text-on-surface-variant">
-        Enter the LAN address displayed on the computer running NetShield as the server.
-        You only need to do this once.
+        Enter the LAN address shown on Computer B (the server).
       </p>
       <form onSubmit={handleConnect} className="mt-5 space-y-4">
         <label className="block text-sm text-on-surface">
           Server IP address or hostname
-          <input required value={host} onChange={(event) => setHost(event.target.value)} placeholder="192.168.1.50 or nids-host" pattern="[A-Za-z0-9][A-Za-z0-9.-]*" className="mt-2 w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-on-surface outline-none focus:border-primary" />
+          <input required value={host} onChange={(event) => setHost(event.target.value)} placeholder="192.168.1.50" pattern="[A-Za-z0-9][A-Za-z0-9.-]*" className="mt-2 w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-on-surface outline-none focus:border-primary" />
         </label>
         <label className="block text-sm text-on-surface">
           TCP port
           <input required type="number" min="1" max="65535" value={port} onChange={(event) => setPort(event.target.value)} className="mt-2 w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-on-surface outline-none focus:border-primary" />
         </label>
-        <button type="submit" disabled={connecting || !backendConnected} className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-on-primary disabled:cursor-wait disabled:opacity-60">
+        <button type="submit" disabled={connecting || !agentServerOnline} className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-on-primary disabled:cursor-wait disabled:opacity-60">
           <span className="material-symbols-outlined text-[18px]">{connecting ? 'progress_activity' : 'link'}</span>
           {connecting ? 'Connecting…' : 'Connect to server'}
         </button>
       </form>
       {connection && (
         <div className="mt-5 rounded-lg border border-secondary/30 bg-secondary/10 p-4 text-sm text-secondary">
-          <div className="font-semibold">Connection established</div>
+          <div className="font-semibold">Connection established!</div>
           <div className="mt-1 text-secondary/80">
-            {connection.hostname ? `${connection.hostname} is online.` : 'The server accepted this agent.'}
+            {connection.hostname ? `${connection.hostname} accepted this agent.` : 'The server accepted this agent.'}
           </div>
+          <button
+            onClick={() => navigate('/')}
+            className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-secondary/20 border border-secondary/40 px-3 py-1.5 text-xs font-semibold hover:bg-secondary/30 transition-all"
+          >
+            <span className="material-symbols-outlined text-[15px]">dashboard</span>
+            Open Dashboard
+          </button>
         </div>
       )}
     </SetupShell>

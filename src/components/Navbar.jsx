@@ -3,7 +3,7 @@
  * Four routes: Overview, Live Monitoring, Security, Devices.
  * Shows real backend connection status.
  */
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 
 const NAV_LINKS = [
   { to: '/', icon: 'grid_view', label: 'Overview' },
@@ -13,6 +13,13 @@ const NAV_LINKS = [
 ];
 
 export default function Navbar({ backendConnected, onChangeRole }) {
+  const navigate = useNavigate();
+
+  const handleChangeRole = () => {
+    onChangeRole?.();
+    navigate('/setup', { replace: true });
+  };
+
   return (
     <nav className="fixed top-0 left-0 right-0 h-12 bg-surface-container-lowest/95 backdrop-blur border-b border-outline-variant z-50 px-4 flex items-center justify-between select-none">
       {/* Left — Brand + Nav Links */}
@@ -51,8 +58,8 @@ export default function Navbar({ backendConnected, onChangeRole }) {
       <div className="flex items-center gap-3">
         <button
           type="button"
-          onClick={onChangeRole}
-          className="hidden rounded-lg border border-outline-variant px-2 py-1 font-mono text-[11px] text-on-surface-variant hover:border-primary/50 hover:text-on-surface sm:inline-flex"
+          onClick={handleChangeRole}
+          className="inline-flex rounded-lg border border-outline-variant px-2 py-1 font-mono text-[11px] text-on-surface-variant hover:border-primary/50 hover:text-on-surface"
         >
           Change role
         </button>

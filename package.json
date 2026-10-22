@@ -6,6 +6,8 @@
   "scripts": {
     "start": "start.bat",
     "dev": "vite",
+    "dev:server": "concurrently --names \"BACKEND,FRONTEND\" --prefix-colors \"magenta,cyan\" \"venv\\\\Scripts\\\\python.exe -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload\" \"vite\"",
+    "dev:client": "concurrently --names \"AGENT,FRONTEND\" --prefix-colors \"yellow,cyan\" \"venv\\\\Scripts\\\\python.exe agent/agent_server.py\" \"vite\"",
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview"
@@ -22,6 +24,7 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
+    "concurrently": "^10.0.6",
     "oxlint": "^1.81.0",
     "tailwindcss": "^4.3.3",
     "vite": "^8.3.0"
