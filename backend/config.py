@@ -47,6 +47,15 @@ SERVER_PORT = int(_get_setting("SERVER_PORT", "5000"))
 REMOTE_HOST = _get_setting("REMOTE_HOST", "127.0.0.1")
 REMOTE_PORT = int(_get_setting("REMOTE_PORT", "5000"))
 
+# ── Agent Pairing Code ──
+import secrets as _secrets
+_configured_code = _get_setting("AGENT_PAIRING_CODE", "")
+if _configured_code:
+    AGENT_PAIRING_CODE = _configured_code
+else:
+    AGENT_PAIRING_CODE = f"{_secrets.randbelow(900000) + 100000}"
+    print(f"[NetShield] Generated Agent Pairing Code: {AGENT_PAIRING_CODE}")
+
 # ── Packet capture ──
 CAPTURE_INTERFACE = _get_setting("CAPTURE_INTERFACE", "")
 

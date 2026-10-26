@@ -9,16 +9,22 @@ import json
 import time
 import logging
 
+try:
+    from backend.networking.multi_agent import MultiAgentRegistry
+except ImportError:
+    from networking.multi_agent import MultiAgentRegistry
+
 logger = logging.getLogger("netshield.server")
 
 
 class NetShieldServer:
     """TCP server that listens for remote NetShield agent connections."""
 
-    def __init__(self, host: str = "0.0.0.0", port: int = 5000, on_packet=None):
+    def __init__(self, host: str = "0.0.0.0", port: int = 5000, on_packet=None, registry=None):
         self.host = host
         self.port = port
         self.on_packet = on_packet
+        self.registry = registry or MultiAgentRegistry()
         self._running = False
         self._server_socket = None
         self._thread = None
@@ -164,7 +170,7 @@ class NetShieldServer:
             logger.error(f"Cannot bind to {self.host}:{self.port}: {e}")
             self._running = False
             return
-        self._server_socket.listen(1)
+        self._server_socket.listen(10)
         self._server_socket.settimeout(1.0)
 
         while self._running:
@@ -172,19 +178,10 @@ class NetShieldServer:
                 client, addr = self._server_socket.accept()
                 logger.info(f"Connection from {addr[0]}:{addr[1]}")
                 with self._lock:
-                    previous_client = self._client_socket
-                if previous_client:
-                    logger.info("Replacing the existing agent connection with the new agent")
-                    try:
-                        previous_client.shutdown(socket.SHUT_RDWR)
-                    except OSError:
-                        pass
-                    try:
-                        previous_client.close()
-                    except OSError:
-                        pass
-                with self._lock:
                     self._client_socket = client
+                    self.remote_device["status"] = "connecting"
+                    self.remote_device["ip"] = addr[0]
+                    self.remote_device["port"] = addr[1]
                 threading.Thread(
                     target=self._handle_client,
                     args=(client, addr),
@@ -200,18 +197,13 @@ class NetShieldServer:
         client.settimeout(10.0)
         buffer = ""
 
-        with self._lock:
-            self.remote_device["status"] = "connecting"
-            self.remote_device["ip"] = addr[0]
-            self.remote_device["port"] = addr[1]
-
         try:
             while self._running:
                 try:
                     data = client.recv(4096)
                 except socket.timeout:
-                    if self.remote_device.get("last_heartbeat"):
-                        elapsed = time.time() - self.remote_device["_last_hb_time"]
+                    if self.remote_device.get("last_heartbeat") and self._client_socket is client:
+                        elapsed = time.time() - self.remote_device.get("_last_hb_time", time.time())
                         if elapsed > 30:
                             logger.warning("Heartbeat timeout from client")
                             break
@@ -251,7 +243,7 @@ class NetShieldServer:
                         logger.warning(f"Invalid JSON from client: {line[:100]}")
                         continue
 
-                    self._process_message(client, msg)
+                    self._process_message(client, msg, addr)
 
         except (OSError, ConnectionResetError):
             # Normal socket teardown or client disconnect
@@ -263,6 +255,7 @@ class NetShieldServer:
                 client.close()
             except Exception:
                 pass
+            self.registry.handle_disconnect(client)
             with self._lock:
                 if self._client_socket is client:
                     self._client_socket = None
@@ -270,7 +263,7 @@ class NetShieldServer:
                     self.remote_device["hostname"] = None
             logger.info(f"Client {addr[0]}:{addr[1]} disconnected")
 
-    def _process_message(self, client: socket.socket, msg: dict):
+    def _process_message(self, client: socket.socket, msg: dict, addr=None):
         """Process a single JSON message from the client."""
         msg_type = msg.get("type", "")
         now = time.time()
@@ -325,6 +318,35 @@ class NetShieldServer:
                     self._pending_probes[probe_id]["response"] = msg
                     self._pending_probes[probe_id]["event"].set()
             logger.info(f"Received probe ACK for {probe_id}")
+
+        elif msg_type == "register":
+            res = self.registry.handle_register(client, addr, msg)
+            if res.get("success"):
+                with self._lock:
+                    self._client_socket = client
+                    self.remote_device["status"] = "connected"
+                    self.remote_device["hostname"] = res.get("name", "unknown")
+                    if addr:
+                        self.remote_device["ip"] = addr[0]
+                        self.remote_device["port"] = addr[1]
+                    self.remote_device["connected_since"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+                    self.remote_device["last_message"] = f"REGISTER ({res.get('agent_id')})"
+                    self.remote_device["_last_hb_time"] = now
+
+        elif msg_type == "peer_list_request":
+            self.registry.handle_peer_list_request(client)
+
+        elif msg_type == "connect_request":
+            self.registry.handle_connect_request(client, msg)
+
+        elif msg_type == "connect_accept":
+            self.registry.handle_connect_accept(client, msg)
+
+        elif msg_type == "connect_decline":
+            self.registry.handle_connect_decline(client, msg)
+
+        elif msg_type == "chat_message":
+            self.registry.handle_chat_message(client, msg)
 
         else:
             logger.debug(f"Unknown message type: {msg_type}")

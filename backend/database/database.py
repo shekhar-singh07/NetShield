@@ -7,6 +7,25 @@ import threading
 import json
 from datetime import datetime
 
+try:
+    from .messages import (
+        init_messages_table,
+        store_message,
+        get_conversation,
+        get_recent_messages,
+        get_queued_messages,
+        mark_messages_delivered,
+    )
+except ImportError:
+    from database.messages import (
+        init_messages_table,
+        store_message,
+        get_conversation,
+        get_recent_messages,
+        get_queued_messages,
+        mark_messages_delivered,
+    )
+
 _lock = threading.Lock()
 _db_path = "netshield.db"
 
@@ -16,6 +35,7 @@ def init_db(path: str = None):
     global _db_path
     if path:
         _db_path = path
+    init_messages_table(_db_path)
     conn = sqlite3.connect(_db_path)
     c = conn.cursor()
     c.execute("""

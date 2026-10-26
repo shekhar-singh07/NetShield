@@ -39,7 +39,10 @@ from monitoring.packet_capture import PacketCapture
 from monitoring.flow_analyzer import FlowAnalyzer
 from monitoring.metrics import MetricsCollector
 from detection.detector import DetectionEngine
-from database.database import init_db, store_event, get_events, get_event_counts, clear_events
+from database.database import (
+    init_db, store_event, get_events, get_event_counts, clear_events,
+    get_conversation, get_recent_messages,
+)
 
 # ── Logging ──
 logging.basicConfig(
@@ -262,6 +265,32 @@ def get_devices():
             "port": SERVER_PORT,
             "running": tcp_server._running,
         },
+    }
+
+
+@app.get("/api/agents")
+def get_agents():
+    """Return list of registered agents and their status."""
+    return {
+        "agents": tcp_server.registry.get_agents_status(),
+        "total": len(tcp_server.registry.agents),
+    }
+
+
+@app.get("/api/messages")
+def get_messages_endpoint(agent_a: str = None, agent_b: str = None, limit: int = 100):
+    """
+    Fetch message history.
+    If agent_a and agent_b are provided, return conversation between them.
+    Otherwise return recent messages across all agents.
+    """
+    if agent_a and agent_b:
+        msgs = get_conversation(agent_a, agent_b, limit=limit)
+    else:
+        msgs = get_recent_messages(limit=limit)
+    return {
+        "messages": msgs,
+        "count": len(msgs),
     }
 
 
