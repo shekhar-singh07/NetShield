@@ -69,5 +69,7 @@ logs/
 *.ntvs*
 *.njsproj
 *.sln
-*.sw?
 Thumbs.db
+
+# Agent configurations
+agent_config*.json

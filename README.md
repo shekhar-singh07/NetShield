@@ -555,6 +555,21 @@ To ensure engineering transparency:
 - **Controlled Lab Use Only:** All attack simulations (Port Scan, Traffic Spike, Connection Burst) and traffic generation scripts in this repository are intended **strictly for educational demonstration in a controlled laboratory environment** on hardware owned and authorized by the project team.
 - **No External Targeting:** Do not point the agent or attack simulator at unauthorized IP addresses, public infrastructure, or networks you do not own.
 
+## Run 3 agents on one machine
+
+To run multiple concurrent NetShield agents on the same computer, launch each agent in a separate terminal with its own name, UI port, and dedicated configuration file:
+
+```bash
+# Terminal 1 — Agent Alpha (UI on port 7001)
+python agent/agent_server.py --name "Agent-Alpha" --ui-port 7001 --config-file agent_config_alpha.json
+
+# Terminal 2 — Agent Beta (UI on port 7002)
+python agent/agent_server.py --name "Agent-Beta" --ui-port 7002 --config-file agent_config_beta.json
+
+# Terminal 3 — Agent Gamma (UI on port 7003)
+python agent/agent_server.py --name "Agent-Gamma" --ui-port 7003 --config-file agent_config_gamma.json
+```
+
 ---
 
 ## License

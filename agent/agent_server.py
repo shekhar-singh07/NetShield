@@ -63,6 +63,10 @@ from traffic_generator import (
     run_traffic_spike,
     run_connection_burst,
 )
+try:
+    from agent.agent_client import AgentClient
+except ImportError:
+    from agent_client import AgentClient
 
 # ── Logging ──
 logging.basicConfig(
@@ -71,12 +75,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger("netshield.agent_server")
 
-# ── Agent instance (singleton) ──
+# ── Agent instances ──
 _default_host = os.getenv("REMOTE_HOST", os.getenv("SERVER_HOST", ""))
 _default_port = int(os.getenv("REMOTE_PORT", os.getenv("SERVER_PORT", "5000")))
+_config_file = os.getenv("AGENT_CONFIG_FILE", "agent_config.json")
+_pairing_code = os.getenv("AGENT_PAIRING_CODE", "")
+_agent_name = os.getenv("AGENT_NAME", "Agent")
+
 _agent: NetShieldAgent = NetShieldAgent(
     host=_default_host or "127.0.0.1",
     port=_default_port,
+)
+_client: AgentClient = AgentClient(
+    server_host=_default_host or "127.0.0.1",
+    server_port=_default_port,
+    pairing_code=_pairing_code,
+    agent_name=_agent_name,
+    config_file=_config_file,
+    auto_connect=True,
 )
 _agent_lock = threading.Lock()
 
@@ -109,6 +125,31 @@ class SimulateRequest(BaseModel):
     port_range_end: int = Field(default=80, ge=2, le=65535)
     packet_count: int = Field(default=30, ge=1, le=500)
     burst_duration: float = Field(default=2.0, ge=0.5, le=10.0)
+
+
+class PeerConnectReq(BaseModel):
+    to: str = Field(min_length=1)
+
+
+class PeerRespondReq(BaseModel):
+    from_agent: str = Field(alias="from", min_length=1)
+    accept: bool = True
+    reason: str = ""
+
+    class Config:
+        populate_by_name = True
+
+
+class SendChatReq(BaseModel):
+    to: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+
+
+class UpdateSettingsReq(BaseModel):
+    host: str = ""
+    port: int = 5000
+    pairing_code: str = ""
+    name: str = ""
 
 
 # ── Helper ──
@@ -150,7 +191,55 @@ def _agent_status() -> dict:
 
 
 # ─────────────────────────────────
-#  API Routes
+#  API Routes — Multi-Agent & Chat
+# ─────────────────────────────────
+
+@app.get("/agent/state")
+@app.get("/api/agent/state")
+def get_agent_state():
+    """Return in-memory multi-agent state (peers, sessions, conversations)."""
+    return _client.get_state()
+
+
+@app.post("/agent/connect-request")
+@app.post("/api/agent/connect-request")
+def agent_connect_request(req: PeerConnectReq):
+    """Initiate session handshake with peer."""
+    return _client.send_connect_request(req.to)
+
+
+@app.post("/agent/respond")
+@app.post("/api/agent/respond")
+def agent_respond(req: PeerRespondReq):
+    """Accept or decline an incoming connection request."""
+    return _client.respond_connect_request(req.from_agent, req.accept, req.reason)
+
+
+@app.post("/agent/send")
+@app.post("/api/agent/send")
+def agent_send(req: SendChatReq):
+    """Send a chat message to an active session peer."""
+    return _client.send_chat(req.to, req.text)
+
+
+@app.post("/agent/reconnect")
+@app.post("/api/agent/reconnect")
+def agent_reconnect():
+    """Trigger immediate reconnection to the NetShield server."""
+    _client.reconnect()
+    return {"success": True, "message": "Reconnecting...", **_client.get_state()}
+
+
+@app.post("/agent/settings")
+@app.post("/api/agent/settings")
+def agent_update_settings(req: UpdateSettingsReq):
+    """Update connection settings, persist to config, and reconnect."""
+    _client.update_settings(req.host, req.port, req.pairing_code, req.name)
+    return {"success": True, "message": "Settings updated.", **_client.get_state()}
+
+
+# ─────────────────────────────────
+#  API Routes — Legacy Agent & Simulation
 # ─────────────────────────────────
 
 @app.get("/api/agent/status")
@@ -304,6 +393,10 @@ def shutdown():
         _agent.disconnect()
     except Exception:
         pass
+    try:
+        _client.stop()
+    except Exception:
+        pass
     logger.info("NetShield Agent Server stopped")
 
 
@@ -311,22 +404,56 @@ def shutdown():
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="NetShield Agent Server — Computer A")
+    parser = argparse.ArgumentParser(
+        description="NetShield Agent Server — Computer A (Multi-Agent & Attack Simulator)"
+    )
     parser.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
-    parser.add_argument("--port", type=int, default=7001, help="API port (default: 7001)")
-    parser.add_argument("--server", default=_default_host, help="NetShield server IP (Computer B)")
-    parser.add_argument("--server-port", type=int, default=_default_port, help="Server TCP port (default: 5000)")
+    parser.add_argument("--ui-port", type=int, default=None, help="Agent UI / API port (default: 7001)")
+    parser.add_argument("--port", type=int, default=7001, help="Alias for --ui-port (default: 7001)")
+    parser.add_argument("--name", default=None, help="Agent name (e.g. 'Agent-A')")
+    parser.add_argument(
+        "--config-file",
+        default=None,
+        help="Path to JSON config file (default: agent_config.json)",
+    )
+    parser.add_argument("--pairing-code", default=None, help="Server pairing code")
+    parser.add_argument("--server", default=None, help="NetShield server IP (Computer B)")
+    parser.add_argument(
+        "--server-port", type=int, default=None, help="Server TCP port (default: 5000)"
+    )
     args = parser.parse_args()
 
+    # Determine final UI port (--ui-port takes precedence over --port default)
+    ui_port = args.ui_port if args.ui_port is not None else args.port
+
+    # Reconfigure _client and _agent from CLI flags if supplied
+    if args.config_file:
+        _client.config_file = args.config_file
+        _client._load_config(
+            args.server or _client.server_host,
+            args.server_port or _client.server_port,
+            args.pairing_code if args.pairing_code is not None else _client.pairing_code,
+            args.name or _client.agent_name,
+        )
+    if args.name:
+        _client.agent_name = args.name
+    if args.pairing_code is not None:
+        _client.pairing_code = args.pairing_code
     if args.server:
         _agent.host = args.server
+        _client.server_host = args.server
+    if args.server_port:
         _agent.port = args.server_port
-        logger.info(f"Pre-configured server: {args.server}:{args.server_port}")
+        _client.server_port = args.server_port
 
-    print(f"\n{'='*52}")
-    print(f"  NetShield Agent Server")
-    print(f"  API: http://localhost:{args.port}")
-    print(f"  Open the NetShield UI and choose 'Agent' role")
-    print(f"{'='*52}\n")
+    _client.save_config()
+    _client.reconnect()
 
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    print(f"\n{'='*56}")
+    print(f"  NetShield Agent Server: {_client.agent_name}")
+    print(f"  UI / API: http://localhost:{ui_port} (bound to {args.host})")
+    print(f"  Target Server: {_client.server_host}:{_client.server_port}")
+    print(f"  Config File: {_client.config_file}")
+    print(f"{'='*56}\n")
+
+    uvicorn.run(app, host=args.host, port=ui_port, log_level="warning")

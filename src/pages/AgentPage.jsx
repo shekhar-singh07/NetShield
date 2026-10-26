@@ -4,6 +4,10 @@
  * No iframe, no terminal commands needed.
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
+import AgentConnectionBar from '../components/AgentConnectionBar';
+import AgentPeerList from '../components/AgentPeerList';
+import AgentIncomingRequests from '../components/AgentIncomingRequests';
+import AgentChatWindow from '../components/AgentChatWindow';
 
 const AGENT_API = 'http://localhost:7001';
 
@@ -123,6 +127,14 @@ export default function AgentPage() {
   const [rttHistory, setRttHistory] = useState([]);
   const rttRef = useRef([]);
 
+  // ── Multi-Agent State ──
+  const [agentState, setAgentState] = useState({});
+  const [selectedPeerId, setSelectedPeerId] = useState(null);
+  const [peerRequestLoading, setPeerRequestLoading] = useState(null);
+  const [respondLoading, setRespondLoading] = useState(null);
+  const [chatSendLoading, setChatSendLoading] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
+
   const showToast = useCallback((msg) => {
     setToastMsg(msg);
     setTimeout(() => setToastMsg(null), 3500);
@@ -148,6 +160,103 @@ export default function AgentPage() {
     const id = setInterval(poll, 1500);
     return () => clearInterval(id);
   }, [poll]);
+
+  // Poll agent multi-agent state every 1.0s
+  const pollAgentState = useCallback(async () => {
+    try {
+      const st = await agentFetch('/agent/state');
+      setAgentState(st || {});
+    } catch {
+      // offline
+    }
+  }, []);
+
+  useEffect(() => {
+    pollAgentState();
+    const id = setInterval(pollAgentState, 1000);
+    return () => clearInterval(id);
+  }, [pollAgentState]);
+
+  // Multi-agent actions
+  const handleConnectPeer = async (peerId) => {
+    setPeerRequestLoading(peerId);
+    try {
+      const res = await agentFetch('/agent/connect-request', {
+        method: 'POST',
+        body: JSON.stringify({ to: peerId }),
+      });
+      if (res.success) {
+        showToast(res.message || `Request sent to ${peerId}`);
+      } else {
+        showToast(`Request failed: ${res.error}`);
+      }
+      pollAgentState();
+    } catch (err) {
+      showToast(`Error: ${err.message}`);
+    } finally {
+      setPeerRequestLoading(null);
+    }
+  };
+
+  const handleRespondRequest = async (fromPeerId, accept) => {
+    setRespondLoading(fromPeerId);
+    try {
+      const res = await agentFetch('/agent/respond', {
+        method: 'POST',
+        body: JSON.stringify({ from: fromPeerId, accept }),
+      });
+      showToast(res.message || (accept ? 'Connected' : 'Declined'));
+      pollAgentState();
+    } catch (err) {
+      showToast(`Error: ${err.message}`);
+    } finally {
+      setRespondLoading(null);
+    }
+  };
+
+  const handleSendMessage = async (toPeerId, text) => {
+    setChatSendLoading(true);
+    try {
+      const res = await agentFetch('/agent/send', {
+        method: 'POST',
+        body: JSON.stringify({ to: toPeerId, text }),
+      });
+      if (!res.success) {
+        showToast(res.error || 'Failed to send message');
+      }
+      pollAgentState();
+    } catch (err) {
+      showToast(`Send error: ${err.message}`);
+    } finally {
+      setChatSendLoading(false);
+    }
+  };
+
+  const handleAgentReconnect = async () => {
+    setReconnecting(true);
+    try {
+      await agentFetch('/agent/reconnect', { method: 'POST' });
+      showToast('Reconnecting agent...');
+      pollAgentState();
+    } catch (err) {
+      showToast(`Error: ${err.message}`);
+    } finally {
+      setReconnecting(false);
+    }
+  };
+
+  const handleUpdateSettings = async (settings) => {
+    try {
+      const res = await agentFetch('/agent/settings', {
+        method: 'POST',
+        body: JSON.stringify(settings),
+      });
+      showToast(res.message || 'Settings saved');
+      pollAgentState();
+    } catch (err) {
+      showToast(`Error: ${err.message}`);
+    }
+  };
 
   const handleConnect = async (e) => {
     e.preventDefault();
@@ -281,7 +390,50 @@ export default function AgentPage() {
         </div>
       </div>
 
-      {/* ── Main grid ── */}
+      {/* ── Agent Connection & Multi-Agent Status Bar ── */}
+      <AgentConnectionBar
+        state={agentState}
+        onReconnect={handleAgentReconnect}
+        onUpdateSettings={handleUpdateSettings}
+        reconnecting={reconnecting}
+      />
+
+      {/* ── Incoming Requests ── */}
+      <AgentIncomingRequests
+        requests={agentState.incoming_requests || []}
+        onRespond={handleRespondRequest}
+        respondLoading={respondLoading}
+      />
+
+      {/* ── Peer Discovery & Inter-Agent Chat ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        <div className="lg:col-span-5">
+          <AgentPeerList
+            peers={agentState.peers || []}
+            selectedPeerId={selectedPeerId}
+            activeSessions={agentState.active_sessions || []}
+            onSelectPeer={(pid) => setSelectedPeerId(pid)}
+            onConnectRequest={handleConnectPeer}
+            requestLoading={peerRequestLoading}
+          />
+        </div>
+
+        <div className="lg:col-span-7">
+          <AgentChatWindow
+            selectedPeer={
+              (agentState.peers || []).find((p) => p.agent_id === selectedPeerId) ||
+              (selectedPeerId ? { agent_id: selectedPeerId, name: selectedPeerId, status: 'offline' } : null)
+            }
+            messages={(agentState.conversations || {})[selectedPeerId] || []}
+            currentAgentId={agentState.agent_id || ''}
+            hasActiveSession={(agentState.active_sessions || []).includes(selectedPeerId)}
+            onSendMessage={handleSendMessage}
+            sendLoading={chatSendLoading}
+          />
+        </div>
+      </div>
+
+      {/* ── Main grid (Diagnostics & Simulation Lab) ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 
         {/* ── Connect panel ── */}
