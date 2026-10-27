@@ -115,6 +115,12 @@ export const quarantineAgent = (agentId) =>
 export const releaseAgent = (agentId) =>
   postJSON(`/api/agents/${encodeURIComponent(agentId)}/release`);
 
+/** GET /api/quarantine/policy — get auto-quarantine parameters and whitelist */
+export const fetchQuarantinePolicy = () => fetchJSON('/api/quarantine/policy');
+
+/** POST /api/quarantine/policy — update auto-quarantine parameters */
+export const updateQuarantinePolicy = (policy) => postJSON('/api/quarantine/policy', policy);
+
 /**
  * Check if backend is reachable.
  * Returns { connected: true, data } or { connected: false }.

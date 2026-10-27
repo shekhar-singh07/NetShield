@@ -5,6 +5,7 @@ export default function AgentChatWindow({
   messages = [],
   currentAgentId = '',
   hasActiveSession = false,
+  isQuarantined = false,
   onSendMessage,
   sendLoading = false,
 }) {
@@ -19,7 +20,7 @@ export default function AgentChatWindow({
   const handleSubmit = (e) => {
     e?.preventDefault();
     const trimmed = inputText.trim();
-    if (!trimmed || sendLoading || !hasActiveSession) return;
+    if (!trimmed || sendLoading || !hasActiveSession || isQuarantined) return;
     onSendMessage?.(selectedPeer.agent_id, trimmed);
     setInputText('');
   };
@@ -124,7 +125,12 @@ export default function AgentChatWindow({
 
       {/* Input bar */}
       <div className="p-3 border-t border-outline-variant/60 bg-surface-container/30 rounded-b-xl">
-        {!hasActiveSession ? (
+        {isQuarantined ? (
+          <div className="py-2.5 px-3 rounded-lg bg-amber-500/15 border border-amber-500/40 font-mono text-[11px] text-amber-300 flex items-center gap-2">
+            <span className="material-symbols-outlined text-[16px] text-amber-400">gpp_bad</span>
+            <span>Agent quarantined by NIDS. Outgoing messages and requests are temporarily isolated.</span>
+          </div>
+        ) : !hasActiveSession ? (
           <div className="py-2 px-3 rounded-lg bg-surface-container border border-outline-variant/40 font-mono text-[11px] text-amber-400 flex items-center justify-between">
             <span className="flex items-center gap-1.5">
               <span className="material-symbols-outlined text-[15px]">lock</span>

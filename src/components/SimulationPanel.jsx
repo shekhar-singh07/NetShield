@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { simulateTraffic } from '../api';
+import { useState, useEffect } from 'react';
+import { simulateTraffic, fetchAgents } from '../api';
 
 const SCENARIOS = [
   {
@@ -45,8 +45,13 @@ const SEVERITY_TAG = {
 export default function SimulationPanel({ onSimulationComplete }) {
   const [loadingScenario, setLoadingScenario] = useState(null);
   const [sourceIp, setSourceIp] = useState('192.168.1.105');
+  const [agents, setAgents] = useState([]);
   const [lastResult, setLastResult] = useState(null);
   const [isExpanded, setIsExpanded] = useState(true);
+
+  useEffect(() => {
+    fetchAgents().then((res) => setAgents(res?.agents || [])).catch(() => {});
+  }, []);
 
   const handleLaunch = async (scenarioId) => {
     setLoadingScenario(scenarioId);
@@ -85,16 +90,38 @@ export default function SimulationPanel({ onSimulationComplete }) {
 
       {isExpanded && (
         <div className="p-3.5 flex flex-col gap-3.5">
-          {/* Source IP */}
-          <div className="flex flex-wrap items-center gap-2.5 bg-surface-container/60 p-2.5 rounded-lg border border-outline-variant/60">
-            <span className="font-mono text-[12px] text-outline">Source IP</span>
-            <input
-              type="text"
-              value={sourceIp}
-              onChange={(e) => setSourceIp(e.target.value)}
-              className="w-36 h-7.5 px-2.5 rounded bg-surface-container-lowest border border-outline-variant font-mono text-[12px] text-on-surface focus:outline-none focus:border-primary"
-              placeholder="192.168.1.105"
-            />
+          {/* Source IP and Agent Targets */}
+          <div className="flex flex-wrap items-center justify-between gap-2.5 bg-surface-container/60 p-2.5 rounded-lg border border-outline-variant/60">
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[12px] text-outline">Source IP</span>
+              <input
+                type="text"
+                value={sourceIp}
+                onChange={(e) => setSourceIp(e.target.value)}
+                className="w-36 h-7.5 px-2.5 rounded bg-surface-container-lowest border border-outline-variant font-mono text-[12px] text-on-surface focus:outline-none focus:border-primary"
+                placeholder="192.168.1.105"
+              />
+            </div>
+            {agents.filter((a) => a.ip).length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="font-mono text-[11px] text-outline">Target Connected Agent:</span>
+                {agents.filter((a) => a.ip).map((a) => (
+                  <button
+                    key={a.agent_id}
+                    type="button"
+                    onClick={() => setSourceIp(a.ip)}
+                    className={`px-2 py-0.5 rounded font-mono text-[11px] font-medium border transition-all ${
+                      sourceIp === a.ip
+                        ? 'bg-primary/20 text-primary border-primary'
+                        : 'bg-surface-container hover:bg-surface-container-high text-on-surface border-outline-variant'
+                    }`}
+                    title={`Use IP ${a.ip} of agent '${a.name || a.agent_id}'`}
+                  >
+                    {a.name || a.agent_id} ({a.ip})
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Scenario Grid */}

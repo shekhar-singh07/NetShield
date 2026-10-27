@@ -53,6 +53,8 @@ class AgentClient:
 
         # Multi-agent state
         self.agent_id = None
+        self.quarantined = False
+        self.quarantine_notice = None
         self.peers = {}  # agent_id -> {agent_id, name, status, session_status}
         self.incoming_requests = []  # [{from_agent_id, from_name, timestamp}]
         self.active_sessions = set()  # set of peer agent_id strings
@@ -423,12 +425,20 @@ class AgentClient:
 
         elif msg_type == "system_notice":
             text = msg.get("message", "System notice")
+            code = msg.get("code")
             with self._lock:
+                if code in ("QUARANTINED", "AUTO_QUARANTINED"):
+                    self.quarantined = True
+                    self.quarantine_notice = text
+                elif code == "RELEASED":
+                    self.quarantined = False
+                    self.quarantine_notice = None
                 self.system_notices.append({
                     "time": time.strftime("%H:%M:%S"),
                     "text": text,
+                    "code": code,
                 })
-            logger.info(f"System notice from server: {text}")
+            logger.info(f"System notice from server: {text} ({code})")
 
         elif msg_type == "error":
             logger.warning(f"Server error: {msg.get('message')}")
@@ -552,4 +562,6 @@ class AgentClient:
                 "active_sessions": list(self.active_sessions),
                 "conversations": conv_serializable,
                 "system_notices": list(self.system_notices),
+                "quarantined": self.quarantined,
+                "quarantine_notice": self.quarantine_notice,
             }

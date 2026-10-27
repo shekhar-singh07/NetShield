@@ -398,6 +398,26 @@ export default function AgentPage() {
         reconnecting={reconnecting}
       />
 
+      {/* ── Quarantine Alert Banner ── */}
+      {agentState.quarantined && (
+        <div className="bg-amber-500/15 border border-amber-500/40 rounded-xl p-3.5 flex items-center gap-3 text-amber-200 shadow-xs animate-pulse">
+          <span className="material-symbols-outlined text-[24px] text-amber-400 shrink-0">
+            gpp_bad
+          </span>
+          <div className="flex-1 min-w-0">
+            <div className="font-mono text-[13px] font-bold text-amber-300 flex items-center gap-2">
+              <span>Agent Under Quarantine</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/25 border border-amber-500/40 uppercase">
+                Isolated by NIDS
+              </span>
+            </div>
+            <div className="font-mono text-[11px] text-amber-200/90 truncate">
+              {agentState.quarantine_notice || 'Suspicious network activity detected. Messaging and handshake requests are temporarily blocked.'}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Incoming Requests ── */}
       <AgentIncomingRequests
         requests={agentState.incoming_requests || []}
@@ -427,6 +447,7 @@ export default function AgentPage() {
             messages={(agentState.conversations || {})[selectedPeerId] || []}
             currentAgentId={agentState.agent_id || ''}
             hasActiveSession={(agentState.active_sessions || []).includes(selectedPeerId)}
+            isQuarantined={Boolean(agentState.quarantined)}
             onSendMessage={handleSendMessage}
             sendLoading={chatSendLoading}
           />

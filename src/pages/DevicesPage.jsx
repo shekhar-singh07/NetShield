@@ -2,7 +2,7 @@
  * DevicesPage — server & agent status, probe test, connect command, details.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { fetchDevices, fetchStatus, fetchAgents, quarantineAgent, releaseAgent } from '../api';
+import { fetchDevices, fetchStatus, fetchAgents, quarantineAgent, releaseAgent, fetchQuarantinePolicy } from '../api';
 import { DisconnectedBanner } from './OverviewPage';
 import AgentControlPanel from '../components/AgentControlPanel';
 
@@ -19,6 +19,7 @@ export default function DevicesPage({ backendConnected }) {
   const [devices, setDevices] = useState(null);
   const [status, setStatus] = useState(null);
   const [agents, setAgents] = useState([]);
+  const [policy, setPolicy] = useState(null);
   const [copiedCmd, setCopiedCmd] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [probeVerified, setProbeVerified] = useState(false);
@@ -32,8 +33,9 @@ export default function DevicesPage({ backendConnected }) {
 
   const loadAgents = useCallback(async () => {
     try {
-      const a = await fetchAgents();
+      const [a, pol] = await Promise.all([fetchAgents(), fetchQuarantinePolicy().catch(() => null)]);
       setAgents(a.agents || []);
+      if (pol) setPolicy(pol);
     } catch {
       // Agents panel fails soft; device telemetry is unaffected
     }
@@ -316,6 +318,10 @@ export default function DevicesPage({ backendConnected }) {
             <span className="px-2 py-0.5 rounded bg-primary/15 text-primary font-mono text-[11px] font-semibold border border-primary/30">
               {agents.length} total
             </span>
+            <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded bg-secondary/15 text-secondary font-mono text-[10px] font-semibold border border-secondary/30">
+              <span className="material-symbols-outlined text-[12px]">security</span>
+              Auto-Defense: {policy?.enabled ? `${policy.cooldown_seconds || 60}s TTL (Whitelist Protected)` : 'Disabled'}
+            </span>
           </div>
           <button
             onClick={loadAgents}
@@ -343,18 +349,34 @@ export default function DevicesPage({ backendConnected }) {
                 <tr key={a.agent_id} className="h-7.5 hover:bg-surface-container-high/60 transition-colors">
                   <td className="px-3 text-on-surface font-medium">{a.name || a.agent_id}</td>
                   <td className="px-3">
-                    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-mono text-[10px] font-semibold border ${
-                      a.quarantined
-                        ? 'bg-error-container/40 text-error border-error-container'
-                        : a.status === 'online'
+                    {a.quarantined ? (
+                      a.quarantine_type === 'auto' ? (
+                        <span
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-mono text-[10px] font-semibold border bg-amber-500/20 text-amber-300 border-amber-500/40"
+                          title={a.quarantine_reason || 'Suspicious traffic detected by NIDS'}
+                        >
+                          <span className="material-symbols-outlined text-[12px] animate-spin">timelapse</span>
+                          AUTO-QUARANTINED {a.quarantine_remaining_seconds != null ? `(${a.quarantine_remaining_seconds}s)` : ''}
+                        </span>
+                      ) : (
+                        <span
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-mono text-[10px] font-semibold border bg-error-container/40 text-error border-error-container"
+                          title={a.quarantine_reason || 'Manually quarantined'}
+                        >
+                          <span className="w-1 h-1 rounded-full bg-error" />
+                          QUARANTINED (MANUAL)
+                        </span>
+                      )
+                    ) : (
+                      <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-mono text-[10px] font-semibold border ${
+                        a.status === 'online'
                           ? 'bg-secondary/15 text-secondary border-secondary/30'
                           : 'bg-surface-container text-outline border-outline-variant'
-                    }`}>
-                      <span className={`w-1 h-1 rounded-full ${
-                        a.quarantined ? 'bg-error' : a.status === 'online' ? 'bg-secondary' : 'bg-outline'
-                      }`} />
-                      {a.quarantined ? 'QUARANTINED' : (a.status || 'unknown').toUpperCase()}
-                    </span>
+                      }`}>
+                        <span className={`w-1 h-1 rounded-full ${a.status === 'online' ? 'bg-secondary' : 'bg-outline'}`} />
+                        {(a.status || 'unknown').toUpperCase()}
+                      </span>
+                    )}
                   </td>
                   <td className="px-3 text-on-surface">{a.ip || '—'}</td>
                   <td className="px-3 text-secondary">
@@ -370,7 +392,7 @@ export default function DevicesPage({ backendConnected }) {
                       >
                         <span className="inline-flex items-center gap-1">
                           <span className="material-symbols-outlined text-[14px]">lock_open</span>
-                          Release
+                          {a.quarantine_type === 'auto' ? 'Release Early' : 'Release'}
                         </span>
                       </button>
                     ) : (

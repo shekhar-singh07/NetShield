@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from config import (
     SERVER_HOST, SERVER_PORT, CAPTURE_INTERFACE,
@@ -70,6 +71,13 @@ def on_security_event(event: dict):
         if len(_recent_events) > 200:
             _recent_events[:] = _recent_events[:200]
     store_event(event)
+
+    # Automated quarantine evaluation with defense-in-depth against false alarms
+    try:
+        if "tcp_server" in globals() and tcp_server and getattr(tcp_server, "registry", None):
+            tcp_server.registry.evaluate_security_event(event)
+    except Exception as e:
+        logger.error(f"Error evaluating auto-quarantine for event: {e}")
 
 
 detection_engine = DetectionEngine(
@@ -321,6 +329,30 @@ def release_agent_endpoint(agent_id: str):
     if not ok:
         return {"success": False, "error": f"Agent '{agent_id}' not found"}
     return {"success": True, "agent_id": agent_id, "quarantined": False}
+
+
+class QuarantinePolicyUpdate(BaseModel):
+    enabled: bool = None
+    cooldown_seconds: float = None
+    whitelist_ips: list[str] = None
+    whitelist_agents: list[str] = None
+
+
+@app.get("/api/quarantine/policy")
+def get_quarantine_policy_endpoint():
+    """Return auto-quarantine policy, active cooldowns, and whitelists."""
+    return tcp_server.registry.get_quarantine_policy()
+
+
+@app.post("/api/quarantine/policy")
+def update_quarantine_policy_endpoint(req: QuarantinePolicyUpdate):
+    """Update auto-quarantine configuration."""
+    return tcp_server.registry.update_quarantine_policy(
+        enabled=req.enabled,
+        cooldown_seconds=req.cooldown_seconds,
+        whitelist_ips=req.whitelist_ips,
+        whitelist_agents=req.whitelist_agents,
+    )
 
 
 @app.get("/api/events")
