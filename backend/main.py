@@ -221,6 +221,7 @@ def get_status():
             "port": SERVER_PORT,
             "running": tcp_server._running,
         },
+        "agent_pairing_code": tcp_server.registry.pairing_code,
         "api_server": {
             "host": API_HOST,
             "port": API_PORT,

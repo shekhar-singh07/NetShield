@@ -4,6 +4,7 @@
  * No iframe, no terminal commands needed.
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import AgentConnectionBar from '../components/AgentConnectionBar';
 import AgentPeerList from '../components/AgentPeerList';
 import AgentIncomingRequests from '../components/AgentIncomingRequests';
@@ -113,6 +114,7 @@ function EventRow({ event }) {
 
 // ── Main component ──
 export default function AgentPage() {
+  const location = useLocation();
   const [status, setStatus] = useState(null);
   const [agentOnline, setAgentOnline] = useState(false);
   const [host, setHost] = useState('');
@@ -177,6 +179,12 @@ export default function AgentPage() {
     return () => clearInterval(id);
   }, [pollAgentState]);
 
+  useEffect(() => {
+    if (location.pathname === '/messages') {
+      document.getElementById('agent-messaging')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [location.pathname]);
+
   // Multi-agent actions
   const handleConnectPeer = async (peerId) => {
     setPeerRequestLoading(peerId);
@@ -223,6 +231,8 @@ export default function AgentPage() {
       });
       if (!res.success) {
         showToast(res.error || 'Failed to send message');
+      } else {
+        showToast(res.message || 'Message sent.');
       }
       pollAgentState();
     } catch (err) {
@@ -426,7 +436,7 @@ export default function AgentPage() {
       />
 
       {/* ── Peer Discovery & Inter-Agent Chat ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+      <div id="agent-messaging" className="grid grid-cols-1 lg:grid-cols-12 gap-4 scroll-mt-16">
         <div className="lg:col-span-5">
           <AgentPeerList
             peers={agentState.peers || []}

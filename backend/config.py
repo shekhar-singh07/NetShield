@@ -54,7 +54,6 @@ if _configured_code:
     AGENT_PAIRING_CODE = _configured_code
 else:
     AGENT_PAIRING_CODE = f"{_secrets.randbelow(900000) + 100000}"
-    print(f"[NetShield] Generated Agent Pairing Code: {AGENT_PAIRING_CODE}")
 
 # ── Packet capture ──
 CAPTURE_INTERFACE = _get_setting("CAPTURE_INTERFACE", "")

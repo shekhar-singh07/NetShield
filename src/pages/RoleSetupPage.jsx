@@ -90,6 +90,7 @@ export function ServerSetupPage({ backendConnected }) {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [copied, setCopied] = useState(false);
+  const [copiedPairingCode, setCopiedPairingCode] = useState(false);
 
   const checkServer = async () => {
     setLoading(true);
@@ -116,6 +117,13 @@ export function ServerSetupPage({ backendConnected }) {
     await navigator.clipboard.writeText(`${status.ip}:${status.tcp_server?.port || 5000}`);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2200);
+  };
+
+  const copyPairingCode = async () => {
+    if (!status?.agent_pairing_code) return;
+    await navigator.clipboard.writeText(status.agent_pairing_code);
+    setCopiedPairingCode(true);
+    window.setTimeout(() => setCopiedPairingCode(false), 2200);
   };
 
   const banner = !backendConnected
@@ -146,6 +154,25 @@ export function ServerSetupPage({ backendConnected }) {
         <InfoTile label="Agent TCP port" value={status?.tcp_server?.port || 5000} />
         <InfoTile label="TCP listener" value={status?.tcp_server?.running ? 'Running' : 'Not running'} />
         <InfoTile label="API port" value={status?.api_server?.port || 8000} />
+      </div>
+      <div className="mt-3 rounded-lg border border-outline-variant/70 bg-surface-container-lowest p-4">
+        <div className="font-mono text-[10px] uppercase tracking-wider text-outline">Agent pairing code</div>
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <code className="text-lg font-semibold text-primary">
+            {status?.agent_pairing_code || (backendConnected ? 'Loading…' : 'Unavailable')}
+          </code>
+          <button
+            type="button"
+            onClick={copyPairingCode}
+            disabled={!status?.agent_pairing_code}
+            className="rounded-md border border-outline-variant px-3 py-1.5 text-xs font-semibold text-on-surface-variant hover:border-primary hover:text-primary disabled:opacity-50"
+          >
+            {copiedPairingCode ? 'Copied' : 'Copy code'}
+          </button>
+        </div>
+        <p className="mt-2 text-xs text-on-surface-variant">
+          Enter this code in each agent’s Configure settings.
+        </p>
       </div>
       <div className="mt-5 rounded-lg border border-outline-variant/70 bg-surface-container-lowest p-4">
         <div className="font-mono text-[10px] uppercase tracking-wider text-outline">Address for the agent</div>
