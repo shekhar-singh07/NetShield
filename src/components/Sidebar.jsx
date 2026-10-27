@@ -5,6 +5,7 @@ const NAV_ITEMS = [
   { id: 'live-monitoring', icon: 'monitoring', label: 'Live Monitoring' },
   { id: 'alerts', icon: 'warning', label: 'Alerts', badge: 3 },
   { id: 'devices', icon: 'router', label: 'Devices' },
+  { id: 'messages', icon: 'chat', label: 'Messages' },
   { id: 'traffic', icon: 'swap_calls', label: 'Traffic' },
   { id: 'logs', icon: 'reorder', label: 'Logs' },
   { id: 'settings', icon: 'settings', label: 'Settings' },

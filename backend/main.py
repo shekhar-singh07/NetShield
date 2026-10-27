@@ -35,6 +35,7 @@ from config import (
     get_local_hostname, get_local_ip,
 )
 from networking.server import NetShieldServer
+from networking.multi_agent import MultiAgentRegistry
 from monitoring.packet_capture import PacketCapture
 from monitoring.flow_analyzer import FlowAnalyzer
 from monitoring.metrics import MetricsCollector
@@ -86,7 +87,10 @@ def on_packet(packet: dict):
 
 
 packet_capture = PacketCapture(interface=CAPTURE_INTERFACE, on_packet=on_packet)
-tcp_server = NetShieldServer(host=SERVER_HOST, port=SERVER_PORT, on_packet=on_packet)
+tcp_server = NetShieldServer(
+    host=SERVER_HOST, port=SERVER_PORT, on_packet=on_packet,
+    registry=MultiAgentRegistry(on_security_event=on_security_event),
+)
 
 # Chart data recording thread
 _chart_thread_running = False
@@ -292,6 +296,31 @@ def get_messages_endpoint(agent_a: str = None, agent_b: str = None, limit: int =
         "messages": msgs,
         "count": len(msgs),
     }
+
+
+@app.get("/api/sessions")
+def get_sessions_endpoint():
+    """Active agent-to-agent sessions from the multi-agent registry."""
+    sessions = tcp_server.registry.get_active_sessions_list()
+    return {"sessions": sessions, "total": len(sessions)}
+
+
+@app.post("/api/agents/{agent_id}/quarantine")
+def quarantine_agent_endpoint(agent_id: str):
+    """Place an agent in quarantine (server-side messaging and request block)."""
+    ok = tcp_server.registry.quarantine_agent(agent_id)
+    if not ok:
+        return {"success": False, "error": f"Agent '{agent_id}' not found"}
+    return {"success": True, "agent_id": agent_id, "quarantined": True}
+
+
+@app.post("/api/agents/{agent_id}/release")
+def release_agent_endpoint(agent_id: str):
+    """Release a previously quarantined agent."""
+    ok = tcp_server.registry.release_agent(agent_id)
+    if not ok:
+        return {"success": False, "error": f"Agent '{agent_id}' not found"}
+    return {"success": True, "agent_id": agent_id, "quarantined": False}
 
 
 @app.get("/api/events")

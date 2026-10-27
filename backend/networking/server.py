@@ -303,6 +303,12 @@ class NetShieldServer:
                 self.remote_device["last_message"] = f"Heartbeat #{msg.get('sequence', '?')}"
                 self.remote_device["rtt_ms"] = final_rtt
                 self.remote_device["_last_hb_time"] = now
+
+            # Update multi-agent registry last-seen/RTT for registered agents
+            try:
+                self.registry.record_heartbeat(client, final_rtt)
+            except Exception:
+                pass
             ack = json.dumps({
                 "type": "heartbeat_ack",
                 "status": "connected",

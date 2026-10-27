@@ -2,7 +2,7 @@
  * DevicesPage — server & agent status, probe test, connect command, details.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { fetchDevices, fetchStatus } from '../api';
+import { fetchDevices, fetchStatus, fetchAgents, quarantineAgent, releaseAgent } from '../api';
 import { DisconnectedBanner } from './OverviewPage';
 import AgentControlPanel from '../components/AgentControlPanel';
 
@@ -18,14 +18,25 @@ function timeAgo(iso) {
 export default function DevicesPage({ backendConnected }) {
   const [devices, setDevices] = useState(null);
   const [status, setStatus] = useState(null);
+  const [agents, setAgents] = useState([]);
   const [copiedCmd, setCopiedCmd] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [probeVerified, setProbeVerified] = useState(false);
   const [toastMsg, setToastMsg] = useState(null);
+  const [agentBusy, setAgentBusy] = useState(null);
 
   const showToast = useCallback((msg) => {
     setToastMsg(msg);
     setTimeout(() => setToastMsg(null), 3500);
+  }, []);
+
+  const loadAgents = useCallback(async () => {
+    try {
+      const a = await fetchAgents();
+      setAgents(a.agents || []);
+    } catch {
+      // Agents panel fails soft; device telemetry is unaffected
+    }
   }, []);
 
   const refreshDevices = useCallback(async () => {
@@ -54,12 +65,47 @@ export default function DevicesPage({ backendConnected }) {
     };
 
     poll();
-    const id = setInterval(poll, 2000);
+    loadAgents();
+    const id = setInterval(() => { poll(); loadAgents(); }, 2000);
     return () => {
       active = false;
       clearInterval(id);
     };
-  }, [backendConnected]);
+  }, [backendConnected, loadAgents]);
+
+  const handleQuarantine = useCallback(async (agentId) => {
+    setAgentBusy(agentId);
+    try {
+      const res = await quarantineAgent(agentId);
+      if (res?.success) {
+        showToast(`Agent '${agentId}' quarantined.`);
+        await loadAgents();
+      } else {
+        showToast(`Failed to quarantine '${agentId}': ${res?.error || 'server error'}`);
+      }
+    } catch (e) {
+      showToast(`Failed to quarantine '${agentId}': ${e.message}`);
+    } finally {
+      setAgentBusy(null);
+    }
+  }, [loadAgents, showToast]);
+
+  const handleRelease = useCallback(async (agentId) => {
+    setAgentBusy(agentId);
+    try {
+      const res = await releaseAgent(agentId);
+      if (res?.success) {
+        showToast(`Agent '${agentId}' released from quarantine.`);
+        await loadAgents();
+      } else {
+        showToast(`Failed to release '${agentId}': ${res?.error || 'server error'}`);
+      }
+    } catch (e) {
+      showToast(`Failed to release '${agentId}': ${e.message}`);
+    } finally {
+      setAgentBusy(null);
+    }
+  }, [loadAgents, showToast]);
 
   const isRemoteConnected = devices?.remote?.status === 'connected';
 
@@ -256,6 +302,102 @@ export default function DevicesPage({ backendConnected }) {
               </span>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* ── Registered Agents panel ── */}
+      <div className="flex flex-col bg-surface-container-low border border-outline-variant rounded-lg shadow-xs overflow-hidden">
+        <div className="h-11 px-3.5 flex flex-wrap items-center justify-between border-b border-outline-variant bg-surface-container-lowest gap-2.5">
+          <div className="flex items-center gap-2.5">
+            <span className="material-symbols-outlined text-[18px] text-primary">sensors</span>
+            <span className="text-[13px] font-semibold text-on-surface uppercase tracking-wider font-mono">
+              Registered Agents
+            </span>
+            <span className="px-2 py-0.5 rounded bg-primary/15 text-primary font-mono text-[11px] font-semibold border border-primary/30">
+              {agents.length} total
+            </span>
+          </div>
+          <button
+            onClick={loadAgents}
+            className="h-7.5 w-7.5 rounded-lg bg-surface-container border border-outline-variant flex items-center justify-center text-outline hover:text-on-surface active:scale-90 transition-all"
+            title="Refresh agents"
+          >
+            <span className="material-symbols-outlined text-[16px]">refresh</span>
+          </button>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left">
+            <thead>
+              <tr className="h-7 bg-surface-container border-b border-outline-variant text-outline font-mono text-[11px] uppercase tracking-wider">
+                <th className="px-3 font-medium">Agent Name</th>
+                <th className="px-3 font-medium">Status</th>
+                <th className="px-3 font-medium">IP</th>
+                <th className="px-3 font-medium w-24">RTT</th>
+                <th className="px-3 font-medium">Last Seen</th>
+                <th className="px-3 font-medium text-right">Controls</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-outline-variant/60 text-[12px] font-mono">
+              {agents.map((a) => (
+                <tr key={a.agent_id} className="h-7.5 hover:bg-surface-container-high/60 transition-colors">
+                  <td className="px-3 text-on-surface font-medium">{a.name || a.agent_id}</td>
+                  <td className="px-3">
+                    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-mono text-[10px] font-semibold border ${
+                      a.quarantined
+                        ? 'bg-error-container/40 text-error border-error-container'
+                        : a.status === 'online'
+                          ? 'bg-secondary/15 text-secondary border-secondary/30'
+                          : 'bg-surface-container text-outline border-outline-variant'
+                    }`}>
+                      <span className={`w-1 h-1 rounded-full ${
+                        a.quarantined ? 'bg-error' : a.status === 'online' ? 'bg-secondary' : 'bg-outline'
+                      }`} />
+                      {a.quarantined ? 'QUARANTINED' : (a.status || 'unknown').toUpperCase()}
+                    </span>
+                  </td>
+                  <td className="px-3 text-on-surface">{a.ip || '—'}</td>
+                  <td className="px-3 text-secondary">
+                    {a.rtt_ms != null ? `${a.rtt_ms} ms` : '—'}
+                  </td>
+                  <td className="px-3 text-outline">{timeAgo(a.last_seen) || '—'}</td>
+                  <td className="px-3 text-right">
+                    {a.quarantined ? (
+                      <button
+                        disabled={agentBusy === a.agent_id}
+                        onClick={() => handleRelease(a.agent_id)}
+                        className="px-2 py-1 rounded bg-secondary/15 hover:bg-secondary/25 text-secondary font-mono text-[11px] font-semibold border border-secondary/30 transition-all active:scale-95 disabled:opacity-40"
+                      >
+                        <span className="inline-flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[14px]">lock_open</span>
+                          Release
+                        </span>
+                      </button>
+                    ) : (
+                      <button
+                        disabled={agentBusy === a.agent_id}
+                        onClick={() => handleQuarantine(a.agent_id)}
+                        className="px-2 py-1 rounded bg-error-container/30 hover:bg-error-container/50 text-error font-mono text-[11px] font-semibold border border-error/30 transition-all active:scale-95 disabled:opacity-40"
+                      >
+                        <span className="inline-flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[14px]">gpp_bad</span>
+                          Quarantine
+                        </span>
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+
+              {agents.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-3 py-5 text-center text-outline font-mono text-[11px]">
+                    No agents registered yet. Agents appear here once they register with the pairing code.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 

@@ -37,8 +37,9 @@ class MultiAgentRegistry:
     Thread-safe.
     """
 
-    def __init__(self, pairing_code: str = None):
+    def __init__(self, pairing_code: str = None, on_security_event=None):
         self.pairing_code = pairing_code or AGENT_PAIRING_CODE
+        self.on_security_event = on_security_event
         self._lock = threading.Lock()
 
         # agent_id -> {
@@ -58,6 +59,206 @@ class MultiAgentRegistry:
 
         # Set of frozenset({agent_a, agent_b}) for established peer sessions
         self.accepted_pairs = set()
+
+        # Abuse controls & quarantine state
+        self.quarantined_agents = set()
+        self.sender_msg_times = {}    # agent_id -> [float timestamp]
+        self.muted_until = {}         # agent_id -> float timestamp
+        self.flood_violations = {}    # agent_id -> int count of violations
+
+    def _emit_security_event(self, event_type: str, severity: str, source_ip: str, reason: str, raw_data: dict = None):
+        """Emit security event to server detection/alerts log."""
+        if self.on_security_event:
+            evt = {
+                "timestamp": datetime.now().isoformat(),
+                "source_ip": source_ip or "0.0.0.0",
+                "destination_ip": "127.0.0.1",
+                "protocol": "TCP",
+                "type": event_type,
+                "severity": severity.upper(),
+                "reason": reason,
+                "confidence": 1.0,
+                "raw_data": raw_data or {},
+            }
+            try:
+                self.on_security_event(evt)
+            except Exception as e:
+                logger.error(f"Error emitting security event: {e}")
+
+    def quarantine_agent(self, agent_id: str) -> bool:
+        """Place an agent in quarantine. Blocks all messaging and connect requests."""
+        with self._lock:
+            if agent_id not in self.agents:
+                return False
+            self.quarantined_agents.add(agent_id)
+            client = self.agents[agent_id].get("client")
+            ip = self.agents[agent_id].get("ip", "unknown")
+
+        self._emit_security_event(
+            event_type="AGENT_QUARANTINED",
+            severity="HIGH",
+            source_ip=ip,
+            reason=f"Agent '{agent_id}' was quarantined by server.",
+            raw_data={"agent_id": agent_id},
+        )
+        if client:
+            self._safe_send(client, {
+                "type": "system_notice",
+                "message": "Your agent has been placed in quarantine by the server.",
+                "code": "QUARANTINED",
+            })
+        return True
+
+    def release_agent(self, agent_id: str) -> bool:
+        """Release an agent from quarantine."""
+        with self._lock:
+            if agent_id not in self.agents:
+                return False
+            self.quarantined_agents.discard(agent_id)
+            client = self.agents[agent_id].get("client")
+            ip = self.agents[agent_id].get("ip", "unknown")
+
+        self._emit_security_event(
+            event_type="AGENT_RELEASED",
+            severity="LOW",
+            source_ip=ip,
+            reason=f"Agent '{agent_id}' was released from quarantine.",
+            raw_data={"agent_id": agent_id},
+        )
+        if client:
+            self._safe_send(client, {
+                "type": "system_notice",
+                "message": "Your agent has been released from quarantine.",
+                "code": "RELEASED",
+            })
+        return True
+
+    def is_quarantined(self, agent_id: str) -> bool:
+        """Check if an agent is currently quarantined."""
+        with self._lock:
+            return agent_id in self.quarantined_agents
+
+    FLOOD_WINDOW_SECONDS = 5.0   # Rolling window for message-rate tracking
+    FLOOD_THRESHOLD = 10         # Max messages allowed within the window
+    FLOOD_MUTE_AFTER = 3         # Violations before a 30s mute
+    FLOOD_MUTE_SECONDS = 30.0
+
+    def _check_message_rate(self, agent_id: str, agent_name: str) -> str:
+        """
+        Enforce per-sender message rate policy.
+
+        Policy:
+          - More than 10 messages within a rolling 5-second window is a violation.
+          - Each violation logs one MESSAGE_FLOOD security event and warns the sender.
+          - After 3 accumulated violations the sender is muted for 30 seconds.
+          - While muted, messages are rejected (no extra logging, no DB writes).
+          - When a mute expires, the violation count and timestamps reset.
+
+        Returns: "ok" | "muted" | "warned"
+        """
+        now = time.time()
+        status = "ok"
+        with self._lock:
+            muted_until = self.muted_until.get(agent_id)
+            if muted_until is not None:
+                if now < muted_until:
+                    return "muted"
+                # Mute expired — fresh start for this sender
+                self.muted_until.pop(agent_id, None)
+                self.flood_violations[agent_id] = 0
+                self.sender_msg_times[agent_id] = []
+
+            recent = [t for t in self.sender_msg_times.get(agent_id, []) if now - t < self.FLOOD_WINDOW_SECONDS]
+            recent.append(now)
+            self.sender_msg_times[agent_id] = recent
+
+            if len(recent) > self.FLOOD_THRESHOLD:
+                violations = self.flood_violations.get(agent_id, 0) + 1
+                self.flood_violations[agent_id] = violations
+                if violations >= self.FLOOD_MUTE_AFTER:
+                    self.muted_until[agent_id] = now + self.FLOOD_MUTE_SECONDS
+                    self.sender_msg_times[agent_id] = []
+                    status = "muted"
+                else:
+                    status = "warned"
+
+        if status == "muted":
+            self._emit_security_event(
+                event_type="MESSAGE_FLOOD_MUTED",
+                severity="HIGH",
+                source_ip=self._agent_ip(agent_id),
+                reason=f"Agent '{agent_name or agent_id}' muted for {int(self.FLOOD_MUTE_SECONDS)}s after {self.FLOOD_MUTE_AFTER} message-flood violations.",
+                raw_data={"agent_id": agent_id, "violations": self.flood_violations.get(agent_id)},
+            )
+            self._safe_notice(client=self._agent_client(agent_id),
+                              message=f"Message flood: you have been muted for {int(self.FLOOD_MUTE_SECONDS)} seconds.",
+                              code="MUTED")
+        elif status == "warned":
+            self._emit_security_event(
+                event_type="MESSAGE_FLOOD",
+                severity="MEDIUM",
+                source_ip=self._agent_ip(agent_id),
+                reason=f"Agent '{agent_name or agent_id}' exceeded the message rate limit (> {self.FLOOD_THRESHOLD} messages in {int(self.FLOOD_WINDOW_SECONDS)}s).",
+                raw_data={"agent_id": agent_id, "violations": self.flood_violations.get(agent_id)},
+            )
+            self._safe_notice(client=self._agent_client(agent_id),
+                              message="Message flood warning: slow down or you will be temporarily muted.",
+                              code="FLOOD_WARNING")
+        return status
+
+    def _agent_ip(self, agent_id: str) -> str:
+        with self._lock:
+            info = self.agents.get(agent_id)
+            return info.get("ip", "unknown") if info else "unknown"
+
+    def _agent_name(self, agent_id: str) -> str:
+        with self._lock:
+            info = self.agents.get(agent_id)
+            return info.get("name") if info else None
+
+    def _agent_client(self, agent_id: str):
+        with self._lock:
+            info = self.agents.get(agent_id)
+            return info.get("client") if info else None
+
+    def _safe_notice(self, client, message: str, code: str):
+        """Send a system_notice to a client if it is connected."""
+        if client:
+            self._safe_send(client, {
+                "type": "system_notice",
+                "message": message,
+                "code": code,
+            })
+
+    def record_heartbeat(self, client: socket.socket, rtt_ms: float = None):
+        """Update last_seen and RTT for registered client."""
+        with self._lock:
+            agent_id = self.socket_to_agent.get(client)
+            if agent_id and agent_id in self.agents:
+                self.agents[agent_id]["last_seen"] = time.time()
+                if rtt_ms is not None:
+                    self.agents[agent_id]["rtt_ms"] = rtt_ms
+
+    def get_active_sessions_list(self) -> list:
+        """Return list of active agent-to-agent sessions."""
+        sessions = []
+        with self._lock:
+            for pair in self.accepted_pairs:
+                agents = list(pair)
+                if len(agents) == 2:
+                    a_id, b_id = agents[0], agents[1]
+                    a_info = self.agents.get(a_id, {})
+                    b_info = self.agents.get(b_id, {})
+                    a_online = a_info.get("status") == "online"
+                    b_online = b_info.get("status") == "online"
+                    sessions.append({
+                        "agent_a": a_id,
+                        "agent_b": b_id,
+                        "agent_a_name": a_info.get("name", a_id),
+                        "agent_b_name": b_info.get("name", b_id),
+                        "status": "active" if (a_online and b_online) else "degraded",
+                    })
+        return sessions
 
     def is_registered(self, client: socket.socket) -> bool:
         """Check whether a client socket has successfully registered."""
@@ -108,8 +309,15 @@ class MultiAgentRegistry:
                     "agent_id": a["agent_id"],
                     "name": a["name"],
                     "status": a["status"],
+                    "ip": a.get("ip"),
+                    "port": a.get("port"),
                     "connected_at": a.get("connected_at"),
-                    "last_seen": a.get("last_seen"),
+                    "last_seen": (
+                        datetime.fromtimestamp(a["last_seen"]).isoformat()
+                        if isinstance(a.get("last_seen"), (int, float)) else a.get("last_seen")
+                    ),
+                    "quarantined": a["agent_id"] in self.quarantined_agents,
+                    "rtt_ms": a.get("rtt_ms"),
                 }
                 for a in self.agents.values()
             ]
@@ -275,6 +483,22 @@ class MultiAgentRegistry:
             self._safe_send(client, {"type": "connect_error", "reason": "Missing to_agent_id"})
             return
 
+        # Quarantined agents cannot initiate connection requests
+        if self.is_quarantined(from_id):
+            self._emit_security_event(
+                event_type="QUARANTINE_BLOCKED_REQUEST",
+                severity="HIGH",
+                source_ip=self._agent_ip(from_id),
+                reason=f"Quarantined agent '{from_id}' attempted to send a connection request to '{to_id}'.",
+                raw_data={"agent_id": from_id, "target": to_id},
+            )
+            self._safe_send(client, {
+                "type": "connect_error",
+                "to_agent_id": to_id,
+                "reason": "You are quarantined by the server.",
+            })
+            return
+
         with self._lock:
             from_info = self.agents.get(from_id)
             target = self.agents.get(to_id)
@@ -306,6 +530,22 @@ class MultiAgentRegistry:
         peer_a_id = msg.get("from_agent_id")
 
         if not peer_a_id:
+            return
+
+        # Quarantined agents cannot establish new sessions
+        if self.is_quarantined(peer_b_id):
+            self._emit_security_event(
+                event_type="QUARANTINE_BLOCKED_REQUEST",
+                severity="HIGH",
+                source_ip=self._agent_ip(peer_b_id),
+                reason=f"Quarantined agent '{peer_b_id}' attempted to accept a connection request from '{peer_a_id}'.",
+                raw_data={"agent_id": peer_b_id, "target": peer_a_id},
+            )
+            self._safe_send(client, {
+                "type": "connect_error",
+                "to_agent_id": peer_a_id,
+                "reason": "You are quarantined by the server.",
+            })
             return
 
         with self._lock:
@@ -376,6 +616,32 @@ class MultiAgentRegistry:
                 "type": "error",
                 "code": "NOT_CONNECTED",
                 "message": f"Session not established with {to_id}",
+            })
+            return
+
+        # Quarantined senders are blocked before any persistence or relay
+        if self.is_quarantined(from_id):
+            self._emit_security_event(
+                event_type="QUARANTINE_BLOCKED_MESSAGE",
+                severity="HIGH",
+                source_ip=self._agent_ip(from_id),
+                reason=f"Quarantined agent '{from_id}' attempted to send a message to '{to_id}'.",
+                raw_data={"agent_id": from_id, "target": to_id, "content": str(content)[:120]},
+            )
+            self._safe_send(client, {
+                "type": "error",
+                "code": "QUARANTINED",
+                "message": "Your agent is quarantined by the server. Messages are blocked.",
+            })
+            return
+
+        # Per-sender flood control and mute enforcement
+        rate_status = self._check_message_rate(from_id, self._agent_name(from_id))
+        if rate_status == "muted":
+            self._safe_send(client, {
+                "type": "error",
+                "code": "MUTED_FLOOD",
+                "message": f"You are muted for message flooding. Try again in {int(self.FLOOD_MUTE_SECONDS)}s.",
             })
             return
 

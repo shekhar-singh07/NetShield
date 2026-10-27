@@ -421,6 +421,15 @@ class AgentClient:
                 self._last_rtt_ms = rtt
             self._last_heartbeat = time.strftime("%Y-%m-%dT%H:%M:%S")
 
+        elif msg_type == "system_notice":
+            text = msg.get("message", "System notice")
+            with self._lock:
+                self.system_notices.append({
+                    "time": time.strftime("%H:%M:%S"),
+                    "text": text,
+                })
+            logger.info(f"System notice from server: {text}")
+
         elif msg_type == "error":
             logger.warning(f"Server error: {msg.get('message')}")
             with self._lock:

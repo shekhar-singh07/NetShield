@@ -10,6 +10,7 @@ const NAV_LINKS = [
   { to: '/monitoring', icon: 'monitoring', label: 'Live Monitoring' },
   { to: '/security', icon: 'shield', label: 'Security' },
   { to: '/devices', icon: 'router', label: 'Devices' },
+  { to: '/messages', icon: 'chat', label: 'Messages' },
 ];
 
 export default function Navbar({ backendConnected, onChangeRole }) {

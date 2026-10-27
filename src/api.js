@@ -98,6 +98,23 @@ export const sendAgentMessage = (message = 'NETSHIELD_PROBE') =>
 export const simulateCustomTraffic = (params) =>
   postJSON('/api/simulate/custom', params);
 
+/** GET /api/agents — registered agents with status, IP, last-seen, RTT, quarantine */
+export const fetchAgents = () => fetchJSON('/api/agents');
+
+/** GET /api/messages — inter-agent message history */
+export const fetchMessages = (limit = 100) => fetchJSON(`/api/messages?limit=${limit}`);
+
+/** GET /api/sessions — active agent-to-agent sessions */
+export const fetchSessions = () => fetchJSON('/api/sessions');
+
+/** POST /api/agents/{agent_id}/quarantine — block an agent's messaging server-side */
+export const quarantineAgent = (agentId) =>
+  postJSON(`/api/agents/${encodeURIComponent(agentId)}/quarantine`);
+
+/** POST /api/agents/{agent_id}/release — release a quarantined agent */
+export const releaseAgent = (agentId) =>
+  postJSON(`/api/agents/${encodeURIComponent(agentId)}/release`);
+
 /**
  * Check if backend is reachable.
  * Returns { connected: true, data } or { connected: false }.

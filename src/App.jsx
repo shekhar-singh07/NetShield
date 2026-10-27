@@ -5,6 +5,7 @@ import OverviewPage from './pages/OverviewPage';
 import MonitoringPage from './pages/MonitoringPage';
 import SecurityPage from './pages/SecurityPage';
 import DevicesPage from './pages/DevicesPage';
+import MessagesPage from './pages/MessagesPage';
 import AgentPage from './pages/AgentPage';
 import RoleSetupPage, { AgentSetupPage, ServerSetupPage } from './pages/RoleSetupPage';
 import { clearStoredRole, getStoredRole } from './roleStorage';
@@ -58,6 +59,7 @@ export default function App() {
             <Route path="/monitoring" element={role ? (isAgent ? <AgentPage /> : <MonitoringPage backendConnected={backendConnected} />) : <Navigate to="/setup" replace />} />
             <Route path="/security" element={role ? (isAgent ? <AgentPage /> : <SecurityPage backendConnected={backendConnected} />) : <Navigate to="/setup" replace />} />
             <Route path="/devices" element={role ? (isAgent ? <AgentPage /> : <DevicesPage backendConnected={backendConnected} />) : <Navigate to="/setup" replace />} />
+            <Route path="/messages" element={role ? (isAgent ? <AgentPage /> : <MessagesPage backendConnected={backendConnected} />) : <Navigate to="/setup" replace />} />
             <Route path="*" element={<Navigate to={role ? '/' : '/setup'} replace />} />
           </Routes>
         </main>
