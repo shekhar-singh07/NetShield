@@ -327,12 +327,13 @@ export default function AgentPage() {
   const handleSimulate = async () => {
     setSimLoading(true);
     setSimResult(null);
+    const resolvedTarget = agentState?.server_host || status?.server_host || host.trim() || '127.0.0.1';
     try {
       const res = await agentFetch('/api/agent/simulate', {
         method: 'POST',
         body: JSON.stringify({
           attack_type: simType,
-          target_host: status?.server_host || host.trim(),
+          target_host: resolvedTarget,
         }),
       });
       setSimResult(res);
@@ -344,8 +345,8 @@ export default function AgentPage() {
     }
   };
 
-  const isConnected = status?.status === 'connected';
-  const isRetrying = status?.status === 'retrying';
+  const isConnected = status?.status === 'connected' || Boolean(agentState?.connected) || agentState?.status === 'connected';
+  const isRetrying = status?.status === 'retrying' || agentState?.status === 'reconnecting';
 
   // ── Agent server not running ──
   if (!agentOnline) {
@@ -602,7 +603,11 @@ export default function AgentPage() {
           <span className="font-mono text-[13px] font-semibold text-on-surface uppercase tracking-wider">
             Attack Simulation Lab
           </span>
-          {!isConnected && (
+          {isConnected ? (
+            <span className="ml-auto font-mono text-[11px] text-tertiary">
+              Target: {agentState?.server_host || status?.server_host || host.trim() || '127.0.0.1'}
+            </span>
+          ) : (
             <span className="ml-auto font-mono text-[11px] text-outline">Connect to server first</span>
           )}
         </div>

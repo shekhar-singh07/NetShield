@@ -330,7 +330,12 @@ def simulate_attack(req: SimulateRequest):
     Trigger a network attack simulation from this agent machine.
     Runs in a background thread so the API returns immediately.
     """
-    target = req.target_host.strip() or _agent.host
+    target = (
+        req.target_host.strip()
+        or getattr(_client, "server_host", "")
+        or getattr(_agent, "host", "")
+        or "127.0.0.1"
+    )
 
     def _run():
         try:
