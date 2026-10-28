@@ -123,7 +123,7 @@ class SimulateRequest(BaseModel):
     target_host: str = Field(default="")
     port_range_start: int = Field(default=20, ge=1, le=65534)
     port_range_end: int = Field(default=80, ge=2, le=65535)
-    packet_count: int = Field(default=30, ge=1, le=500)
+    packet_count: int = Field(default=600, ge=1, le=5000)
     burst_duration: float = Field(default=2.0, ge=0.5, le=10.0)
 
 
@@ -346,18 +346,22 @@ def simulate_attack(req: SimulateRequest):
                     end_port=req.port_range_end,
                 )
             elif req.attack_type == "traffic_spike":
+                # Volumetric spike must exceed 500 pkts/s to trigger rule and ML detectors
+                count = max(req.packet_count, 650)
                 run_traffic_spike(
                     target_ip=target,
-                    count=req.packet_count,
+                    count=count,
                 )
             elif req.attack_type == "connection_burst":
+                # Connection burst must exceed 50 conn/s to trigger rule and ML detectors
+                count = max(req.packet_count, 65)
                 run_connection_burst(
                     target_ip=target,
-                    count=req.packet_count,
+                    count=count,
                 )
             else:
                 # Normal: just send a few harmless packets
-                run_traffic_spike(target_ip=target, count=min(req.packet_count, 50))
+                run_traffic_spike(target_ip=target, count=min(req.packet_count, 20))
         except Exception as e:
             logger.error(f"Simulation error ({req.attack_type}): {e}")
 

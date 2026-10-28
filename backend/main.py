@@ -433,81 +433,89 @@ def simulate_traffic(scenario: str = "normal", count: int = 50, source_ip: str =
     Injects synthetic packet streams through the real FlowAnalyzer and DetectionEngine.
     """
     now = time.time()
+    dest_ip = get_local_ip()
     generated = 0
     metrics_collector.start_monitoring()
+    with detection_engine._lock:
+        prev_interval = detection_engine._analysis_interval
+        detection_engine._analysis_interval = 999999
 
-    if scenario == "port_scan":
-        # Scan 25 unique destination ports to trigger PORT_SCAN_LIKE rule (> 15)
-        for port in range(20, 46):
-            pkt = {
-                "timestamp": now,
-                "source_ip": source_ip,
-                "destination_ip": get_local_ip(),
-                "source_port": 54321,
-                "destination_port": port,
-                "protocol": "TCP",
-                "length": 64,
-                "tcp_flags": "0x0002",
-                "protocols_str": "eth:ip:tcp",
-            }
-            on_packet(pkt)
-            generated += 1
+    try:
+        if scenario == "port_scan":
+            # Scan 25 unique destination ports to trigger PORT_SCAN_LIKE rule (> 15)
+            for port in range(20, 46):
+                pkt = {
+                    "timestamp": now,
+                    "source_ip": source_ip,
+                    "destination_ip": dest_ip,
+                    "source_port": 54321,
+                    "destination_port": port,
+                    "protocol": "TCP",
+                    "length": 64,
+                    "tcp_flags": "0x0002",
+                    "protocols_str": "eth:ip:tcp",
+                }
+                on_packet(pkt)
+                generated += 1
 
-    elif scenario == "traffic_spike":
-        # Send 550 packets in a burst to trigger TRAFFIC_SPIKE rule (> 500 pkt/s)
-        for i in range(550):
-            pkt = {
-                "timestamp": now,
-                "source_ip": source_ip,
-                "destination_ip": get_local_ip(),
-                "source_port": 40000 + (i % 100),
-                "destination_port": 80,
-                "protocol": "TCP",
-                "length": 1420,
-                "tcp_flags": "0x0010",
-                "protocols_str": "eth:ip:tcp",
-            }
-            on_packet(pkt)
-            generated += 1
+        elif scenario == "traffic_spike":
+            # Send 550 packets in a burst to trigger TRAFFIC_SPIKE rule (> 500 pkt/s)
+            for i in range(550):
+                pkt = {
+                    "timestamp": now,
+                    "source_ip": source_ip,
+                    "destination_ip": dest_ip,
+                    "source_port": 40000 + (i % 100),
+                    "destination_port": 80,
+                    "protocol": "TCP",
+                    "length": 1420,
+                    "tcp_flags": "0x0010",
+                    "protocols_str": "eth:ip:tcp",
+                }
+                on_packet(pkt)
+                generated += 1
 
-    elif scenario == "connection_burst":
-        # Send 60 SYN packets rapidly to trigger CONNECTION_BURST rule (> 50 conn/s)
-        for i in range(60):
-            pkt = {
-                "timestamp": now,
-                "source_ip": source_ip,
-                "destination_ip": get_local_ip(),
-                "source_port": 30000 + i,
-                "destination_port": 443,
-                "protocol": "TCP",
-                "length": 64,
-                "tcp_flags": "0x0002",
-                "protocols_str": "eth:ip:tcp",
-            }
-            on_packet(pkt)
-            generated += 1
+        elif scenario == "connection_burst":
+            # Send 60 SYN packets rapidly to trigger CONNECTION_BURST rule (> 50 conn/s)
+            for i in range(60):
+                pkt = {
+                    "timestamp": now,
+                    "source_ip": source_ip,
+                    "destination_ip": dest_ip,
+                    "source_port": 30000 + i,
+                    "destination_port": 443,
+                    "protocol": "TCP",
+                    "length": 64,
+                    "tcp_flags": "0x0002",
+                    "protocols_str": "eth:ip:tcp",
+                }
+                on_packet(pkt)
+                generated += 1
 
-    else:
-        # Normal mixed traffic (TCP, UDP, ICMP)
-        import random
-        for i in range(count):
-            proto = random.choice(["TCP", "UDP", "ICMP"])
-            dport = random.choice([80, 443, 53, 123])
-            pkt = {
-                "timestamp": now + (i * 0.05),
-                "source_ip": source_ip,
-                "destination_ip": get_local_ip(),
-                "source_port": 50000 + (i % 50),
-                "destination_port": dport,
-                "protocol": proto,
-                "length": random.randint(64, 1500),
-                "tcp_flags": "0x0018" if proto == "TCP" else "",
-                "protocols_str": f"eth:ip:{proto.lower()}",
-            }
-            on_packet(pkt)
-            generated += 1
+        else:
+            # Normal mixed traffic (TCP, UDP, ICMP)
+            import random
+            for i in range(count):
+                proto = random.choice(["TCP", "UDP", "ICMP"])
+                dport = random.choice([80, 443, 53, 123])
+                pkt = {
+                    "timestamp": now + (i * 0.05),
+                    "source_ip": source_ip,
+                    "destination_ip": dest_ip,
+                    "source_port": 50000 + (i % 50),
+                    "destination_port": dport,
+                    "protocol": proto,
+                    "length": random.randint(64, 1500),
+                    "tcp_flags": "0x0018" if proto == "TCP" else "",
+                    "protocols_str": f"eth:ip:{proto.lower()}",
+                }
+                on_packet(pkt)
+                generated += 1
+    finally:
+        with detection_engine._lock:
+            detection_engine._analysis_interval = prev_interval
 
-    # Force immediate detection analysis after synthetic injection
+    # Force immediate detection analysis once on the completed synthetic burst
     detection_engine.force_analysis()
 
     with _events_lock:

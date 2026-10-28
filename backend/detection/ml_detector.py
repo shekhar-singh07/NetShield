@@ -375,6 +375,17 @@ class MLDetector:
         confidence = round(float(probabilities[pred_index]), 3)
         calibration = None
 
+        # Sanity check against false positives caused by domain shift between
+        # offline NSL-KDD dataset features and live network flow rates:
+        # 1. A port scan requires scanning multiple distinct ports (> 3).
+        #    A host communicating on 1-3 ports (e.g. heartbeat or chat) CANNOT be a port scan.
+        if pred_label == "PORT_SCAN" and features.get("unique_dst_ports", 0) <= 3:
+            pred_label = "NORMAL"
+
+        # 2. A traffic spike requires elevated packet/burst rate (> 50 pkts/s).
+        if pred_label == "TRAFFIC_SPIKE" and max(features.get("packet_rate", 0), features.get("burst_rate", 0)) < 50:
+            pred_label = "NORMAL"
+
         # NSL-KDD does not expose packet size, so its byte-derived training
         # feature is not directly comparable to live packet sizes. Keep the
         # model's confident predictions, but calibrate clear runtime patterns

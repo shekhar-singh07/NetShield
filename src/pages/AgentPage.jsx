@@ -328,12 +328,16 @@ export default function AgentPage() {
     setSimLoading(true);
     setSimResult(null);
     const resolvedTarget = agentState?.server_host || status?.server_host || host.trim() || '127.0.0.1';
+    const packetCount = simType === 'traffic_spike' ? 650 : (simType === 'connection_burst' ? 70 : 30);
     try {
       const res = await agentFetch('/api/agent/simulate', {
         method: 'POST',
         body: JSON.stringify({
           attack_type: simType,
           target_host: resolvedTarget,
+          packet_count: packetCount,
+          port_range_start: 20,
+          port_range_end: 80,
         }),
       });
       setSimResult(res);

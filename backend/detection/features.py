@@ -18,9 +18,9 @@ class FeatureExtractor:
         # Track per-source activity
         self._src_packets = defaultdict(list)        # src_ip -> [timestamps]
         self._src_bytes = defaultdict(list)          # src_ip -> [(timestamp, length)]
-        self._src_dst_ports = defaultdict(set)       # src_ip -> set of dst_ports
+        self._src_dst_ports = defaultdict(list)      # src_ip -> [(timestamp, dst_port)]
         self._src_connections = defaultdict(list)    # src_ip -> [timestamps of SYN]
-        self._src_rst_count = defaultdict(int)       # src_ip -> RST count
+        self._src_rsts = defaultdict(list)           # src_ip -> [timestamps of RST]
         self._src_last_seen = {}
 
     def update_from_packet(self, packet: dict):
@@ -39,16 +39,16 @@ class FeatureExtractor:
         self._src_last_seen[src] = ts
 
         if dst_port is not None:
-            self._src_dst_ports[src].add(dst_port)
+            self._src_dst_ports[src].append((ts, dst_port))
 
-        # Track SYN (connection attempts)
+        # Track SYN (connection attempts) and RST
         if tcp_flags:
             try:
                 flags_int = int(tcp_flags, 16) if isinstance(tcp_flags, str) and tcp_flags.startswith("0x") else int(tcp_flags)
                 if flags_int & 0x02:  # SYN
                     self._src_connections[src].append(ts)
                 if flags_int & 0x04:  # RST
-                    self._src_rst_count[src] += 1
+                    self._src_rsts[src].append(ts)
             except (ValueError, TypeError):
                 pass
 
@@ -75,8 +75,9 @@ class FeatureExtractor:
         # Effective packet rate (whichever is higher, capturing sudden bursts or sustained load)
         effective_rate = max(packet_rate, burst_rate)
 
-        # Unique destination ports
-        unique_ports = len(self._src_dst_ports.get(src_ip, set()))
+        # Unique destination ports within sliding window
+        recent_ports = {p for t, p in self._src_dst_ports.get(src_ip, []) if t > cutoff}
+        unique_ports = len(recent_ports)
 
         # Connection rate (SYN count in window and burst)
         recent_conns = [t for t in self._src_connections.get(src_ip, []) if t > cutoff]
@@ -90,8 +91,8 @@ class FeatureExtractor:
         total_bytes = sum(recent_bytes)
         avg_pkt_size = (total_bytes / len(recent_packets)) if recent_packets else 0.0
 
-        # RST count (failed connections indicator)
-        rst_count = self._src_rst_count.get(src_ip, 0)
+        # RST count within sliding window
+        rst_count = len([t for t in self._src_rsts.get(src_ip, []) if t > cutoff])
 
         # SYN ratio (fraction of packets that are SYN)
         syn_ratio = (len(recent_conns) / len(recent_packets)) if recent_packets else 0.0
@@ -111,9 +112,13 @@ class FeatureExtractor:
         }
 
     def get_all_source_features(self) -> list:
-        """Extract features for all tracked sources."""
-        sources = set(self._src_packets.keys())
-        return [self.get_features_for_source(src) for src in sources]
+        """Extract features for all currently active sources (seen within window)."""
+        now = time.time()
+        active_sources = [
+            src for src, last_seen in self._src_last_seen.items()
+            if now - last_seen <= self.window
+        ]
+        return [self.get_features_for_source(src) for src in active_sources]
 
     def cleanup(self):
         """Remove stale data outside the window."""
@@ -121,10 +126,13 @@ class FeatureExtractor:
         for src in list(self._src_packets.keys()):
             self._src_packets[src] = [t for t in self._src_packets[src] if t > cutoff]
             self._src_bytes[src] = [(t, b) for t, b in self._src_bytes[src] if t > cutoff]
+            self._src_dst_ports[src] = [(t, p) for t, p in self._src_dst_ports.get(src, []) if t > cutoff]
+            self._src_connections[src] = [t for t in self._src_connections.get(src, []) if t > cutoff]
+            self._src_rsts[src] = [t for t in self._src_rsts.get(src, []) if t > cutoff]
             if not self._src_packets[src]:
                 del self._src_packets[src]
                 self._src_bytes.pop(src, None)
                 self._src_dst_ports.pop(src, None)
                 self._src_connections.pop(src, None)
-                self._src_rst_count.pop(src, None)
+                self._src_rsts.pop(src, None)
                 self._src_last_seen.pop(src, None)

@@ -85,13 +85,20 @@ def get_local_hostname():
         return "unknown"
 
 
+_cached_local_ip = None
+
+
 def get_local_ip():
-    """Best-effort local IP address detection."""
+    """Best-effort local IP address detection (cached)."""
+    global _cached_local_ip
+    if _cached_local_ip:
+        return _cached_local_ip
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
         s.close()
+        _cached_local_ip = ip
         return ip
     except Exception:
         return "127.0.0.1"
