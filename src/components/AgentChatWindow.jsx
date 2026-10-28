@@ -10,11 +10,13 @@ export default function AgentChatWindow({
   sendLoading = false,
 }) {
   const [inputText, setInputText] = useState('');
-  const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
 
-  // Auto-scroll to bottom on new messages
+  // Auto-scroll to bottom of chat container only (prevent scrolling parent window/page)
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+    }
   }, [messages]);
 
   const handleSubmit = (e) => {
@@ -74,7 +76,10 @@ export default function AgentChatWindow({
       </div>
 
       {/* Message history */}
-      <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3 min-h-[260px] max-h-[380px]">
+      <div
+        ref={messagesContainerRef}
+        className="flex-1 p-4 overflow-y-auto flex flex-col gap-3 min-h-[260px] max-h-[380px]"
+      >
         {messages.length === 0 ? (
           <div className="my-auto text-center text-outline font-mono text-[11px] py-8">
             No messages exchanged with {selectedPeer.name || selectedPeer.agent_id} yet.
@@ -120,7 +125,6 @@ export default function AgentChatWindow({
             );
           })
         )}
-        <div ref={messagesEndRef} />
       </div>
 
       {/* Input bar */}
